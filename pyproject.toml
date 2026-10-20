@@ -1,0 +1,22 @@
+[project]
+name = "gipper"
+version = "0.1.0"
+description = "GPU work for the Lyra Forge estate: requests not claims, owned machines and rented GPUs, every second and dollar on the ledger"
+requires-python = ">=3.12"
+dependencies = []  # stdlib only
+
+[project.scripts]
+gipper = "gipper.cli:main"
+
+[project.optional-dependencies]
+test = ["pytest"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["gipper*"]
+
+[tool.setuptools.package-data]
+"gipper.runpod" = ["*.sh"]

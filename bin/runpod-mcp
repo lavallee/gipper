@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# Runpod's MCP server (stdio) with the key read from gipper's .env at launch,
+# so no client config ever holds the key.
+set -euo pipefail
+set -a; . "$(dirname "$(readlink -f "$0")")/../.env"; set +a
+exec npx -y @runpod/mcp-server@latest

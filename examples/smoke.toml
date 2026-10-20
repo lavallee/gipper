@@ -1,0 +1,22 @@
+# Smoke test: rent the cheapest fitting GPU, prove the round trip, give it back.
+name = "smoke"
+workload = "gipper-smoke"
+units = { name = "runs", count = 1 }
+
+[gpu]
+min_mem_gb = 16
+
+[[inputs]]
+src = "smoke"
+dst = "in"
+
+[[outputs]]
+src = "out"
+dst = "smoke-out"
+
+[run]
+command = "mkdir -p out && nvidia-smi > out/nvidia-smi.txt && cat in/hello.txt > out/echo.txt && uv --version >> out/echo.txt && echo done"
+
+[budget]
+max_usd = 0.10
+max_hours = 0.25

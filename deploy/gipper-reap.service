@@ -1,0 +1,6 @@
+[Unit]
+Description=gipper: end rented GPUs gipper started and forgot (only pods named gipper-*)
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/gipper pod reap
