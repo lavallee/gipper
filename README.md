@@ -74,5 +74,17 @@ record per line: `estimate`, `pod.create`, `pod.ready`, `run.start`,
 - Backgrounding `cd X && nohup job &` over ssh backgrounds the whole list, so
   ssh waits for the job; gipper backgrounds only the job, with `setsid` and
   every stream redirected.
+- Host health varies, especially on community cloud: one 5090 was at 100% use
+  with 1 GB held before the job started, an L40S host failed its first CUDA call
+  twice, an RTX 5000 Ada was "busy or unavailable". gipper now preflights the GPU
+  before uploading and replaces a bad host (up to 3), recording `host.reject`
+  with the machine id.
+- The torch build is chosen from the driver version, not from nvidia-smi's
+  "CUDA Version" (CUDA forward-compat libraries in an image inflate it); the
+  default image carries no CUDA at all.
+- Micro-batch 1 leaves a 4090 mostly idle for LoRA training (3.9 s/step vs the
+  3060's 4.5): keep the effective batch, raise the micro-batch (e.g. 4 x 4).
+- A unit started with `systemd-run` disappears when stopped; to resume it,
+  recreate it with the same command line rather than `systemctl start`.
 - First real job: 227 VoxCPM2 takes on a secure-cloud 4090 in 19.7 minutes
   (about 4 of them setup) for $0.29; the same work was ~3.5 h on toronto.

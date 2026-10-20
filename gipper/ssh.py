@@ -64,6 +64,8 @@ class Remote:
     def get(self, src, dst):
         """Remote directory (or file) -> local directory dst (merged, overwriting)."""
         Path(dst).mkdir(parents=True, exist_ok=True)
+        if self.run(f"test -e {shlex.quote(src)}", check=False, timeout=60).returncode:
+            return False  # nothing there (yet): not an error
         remote = (f"if [ -d {shlex.quote(src)} ]; then tar czf - -C {shlex.quote(src)} .; "
                   f"elif [ -e {shlex.quote(src)} ]; then tar czf - -C $(dirname {shlex.quote(src)}) $(basename {shlex.quote(src)}); fi")
         p1 = subprocess.Popen(self._base() + [remote], stdout=subprocess.PIPE)
@@ -72,3 +74,4 @@ class Remote:
         p1.wait()
         if p2.returncode and "empty" not in p2.stderr:
             raise RuntimeError(f"download {src} -> {dst} failed: {p2.stderr[-400:]}")
+        return True

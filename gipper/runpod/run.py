@@ -54,14 +54,15 @@ def estimate(job, gpu_price, throughput=None, setup_s=420):
     return {"wall_s": round(wall), "usd": round(wall / 3600 * gpu_price, 3), "basis": basis}
 
 
-def _create(api, job, gpu_ids, pubkey, run_id):
+def _create(api, job, gpu_ids, pubkey, run_id, cloud=None):
+    cloud = cloud or job.cloud
     s = settings()
     spec = {
         "name": f"gipper-{job.name}-{run_id[-6:]}"[:60],
         "imageName": job.image, "gpuTypeIds": gpu_ids, "gpuTypePriority": "custom", "gpuCount": 1,
-        "cloudType": job.cloud, "computeType": "GPU", "containerDiskInGb": job.container_disk_gb,
+        "cloudType": cloud, "computeType": "GPU", "containerDiskInGb": job.container_disk_gb,
         # direct ssh (tar streams) needs a public IP: community hosts must offer one; secure always does
-        "volumeInGb": 0, "ports": ["22/tcp"], **({"supportPublicIp": True} if job.cloud == "COMMUNITY" else {}),
+        "volumeInGb": 0, "ports": ["22/tcp"], **({"supportPublicIp": True} if cloud == "COMMUNITY" else {}),
         **({"allowedCudaVersions": s["cuda_versions"]} if s["cuda_versions"] else {}), "env": {"PUBLIC_KEY": pubkey, **job.env},
     }
     if job.volume:
@@ -81,6 +82,26 @@ def _wait_ready(api, pod_id, timeout_s=900):
             return p, Remote(p["publicIp"], port)
         time.sleep(5)
     raise RuntimeError(f"pod {pod_id} had no ssh endpoint after {timeout_s}s")
+
+
+class BadHost(RuntimeError):
+    pass
+
+
+def preflight(remote):
+    """Reject a host whose GPU is already busy or broken before any upload: the
+    community hosts seen on 2026-10-20 included one at 100% use and 1 GB held at
+    start, and two whose first CUDA call failed."""
+    r = remote.run("nvidia-smi --query-gpu=utilization.gpu,memory.used,compute_mode --format=csv,noheader,nounits; "
+                   "nvidia-smi --query-compute-apps=pid --format=csv,noheader | wc -l", check=False, timeout=60)
+    if r.returncode:
+        raise BadHost(f"nvidia-smi failed: {r.stderr.strip()[-200:]}")
+    lines = [l for l in r.stdout.strip().splitlines() if l.strip()]
+    util, mem, mode = [x.strip() for x in lines[0].split(",")]
+    procs = int(lines[-1].strip() or 0)
+    if int(util) > 30 or int(mem) > 800 or procs > 0:
+        raise BadHost(f"GPU busy at start: {util}% used, {mem} MiB held, {procs} processes, mode {mode}")
+    return {"util": int(util), "mem_mib": int(mem), "mode": mode}
 
 
 def run(job, *, dry_run=False, log_dir=None, gpu_override=None, throughput=None):
@@ -119,33 +140,45 @@ def run(job, *, dry_run=False, log_dir=None, gpu_override=None, throughput=None)
     old = signal.signal(signal.SIGINT, lambda *a: stop.update(why="interrupted"))
     signal.signal(signal.SIGTERM, lambda *a: stop.update(why="terminated"))
     try:
-        pod = None
-        tries = [(job.cloud, [c[0]["id"] for c in cands[:6]])]
-        if job.cloud == "COMMUNITY":  # nothing free in community: same types, secure cloud, same ceiling
-            sec = [c for c in candidates(api.gpu_types(), job.min_mem_gb, "SECURE", job.prefer) if c[1] <= ceiling]
-            if sec:
-                tries.append(("SECURE", [c[0]["id"] for c in sec[:6]]))
-        for cloud, ids in tries:
+        for attempt in range(3):
+            pod = None
+            tries = [(job.cloud, [c[0]["id"] for c in cands[:6]])]
+            if job.cloud == "COMMUNITY":  # nothing free in community: same types, secure cloud, same ceiling
+                sec = [c for c in candidates(api.gpu_types(), job.min_mem_gb, "SECURE", job.prefer) if c[1] <= ceiling]
+                if sec:
+                    tries.append(("SECURE", [c[0]["id"] for c in sec[:6]]))
+            for cloud, ids in tries:
+                try:
+                    pod = _create(api, job, ids, pubkey, run_id, cloud)
+                    break
+                except RunpodError as e:
+                    if "no instances" not in str(e).lower():
+                        raise
+                    print(f"no {cloud.lower()} instances free for {', '.join(i.replace('NVIDIA ', '') for i in ids)}")
+            if pod is None:
+                raise RunpodError("no instances available at or under the price ceiling")
+            pod_id, t_create = pod["id"], _now()
+            cost_h = pod.get("costPerHr") or price
+            ledger.write("pod.create", {"pod": pod_id, "gpu": (pod.get("machine") or {}).get("gpuTypeId") or gpu["id"],
+                                        "usd_per_h": cost_h, "deadline": t_create + job.max_hours * 3600 + 600},
+                         job=run_id, refs={"name": job.name})
+            print(f"pod {pod_id} created (${cost_h}/h); waiting for ssh")
+            pod, remote = _wait_ready(api, pod_id)
+            if not remote.wait(600):
+                raise RuntimeError("ssh never came up")
+            ledger.write("pod.ready", {"pod": pod_id, "after_s": round(_now() - t_create), "machine": pod.get("machineId"),
+                                       "gpu": (pod.get("machine") or {}).get("gpuTypeId")}, job=run_id)
             try:
-                job.cloud = cloud
-                pod = _create(api, job, ids, pubkey, run_id)
+                health = preflight(remote)
+                ledger.write("host.ok", {"pod": pod_id, **health}, job=run_id)
                 break
-            except RunpodError as e:
-                if "no instances" not in str(e).lower():
-                    raise
-                print(f"no {cloud.lower()} instances free for {', '.join(i.replace('NVIDIA ', '') for i in ids)}")
-        if pod is None:
-            raise RunpodError("no instances available at or under the price ceiling")
-        pod_id, t_create = pod["id"], _now()
-        cost_h = pod.get("costPerHr") or price
-        ledger.write("pod.create", {"pod": pod_id, "gpu": (pod.get("machine") or {}).get("gpuTypeId") or gpu["id"],
-                                    "usd_per_h": cost_h, "deadline": t_create + job.max_hours * 3600 + 600},
-                     job=run_id, refs={"name": job.name})
-        print(f"pod {pod_id} created (${cost_h}/h); waiting for ssh")
-        pod, remote = _wait_ready(api, pod_id)
-        if not remote.wait(600):
-            raise RuntimeError("ssh never came up")
-        ledger.write("pod.ready", {"pod": pod_id, "after_s": round(_now() - t_create)}, job=run_id)
+            except BadHost as e:
+                print(f"rejecting host {pod.get('machineId')}: {e}")
+                ledger.write("host.reject", {"pod": pod_id, "machine": pod.get("machineId"), "why": str(e)}, job=run_id)
+                _terminate(api, pod_id, t_create, cost_h, run_id, job)
+                pod_id = None
+        else:
+            raise RuntimeError("three hosts in a row were busy or broken")
         print(f"ssh ready after {_now() - t_create:.0f}s; uploading inputs")
 
         remote.run(f"mkdir -p {JOBDIR}")
@@ -213,23 +246,27 @@ def run(job, *, dry_run=False, log_dir=None, gpu_override=None, throughput=None)
     finally:
         signal.signal(signal.SIGINT, old)
         if pod_id:
-            for attempt in range(5):
-                try:
-                    api.terminate_pod(pod_id)
-                    break
-                except RunpodError as e:
-                    print(f"terminate failed ({e}); retrying")
-                    time.sleep(5)
-            secs = _now() - t_create
-            ledger.write("pod.terminate", {"pod": pod_id}, job=run_id)
-            ledger.write("spend", {"provider": "runpod", "pod": pod_id, "seconds": round(secs), "usd_per_h": cost_h,
-                                   "usd": round(secs / 3600 * cost_h, 4), "basis": "computed", "accuracy": "estimated"},
-                         job=run_id, refs={"name": job.name, "workload": job.workload})
-            print(f"pod {pod_id} terminated after {secs / 60:.1f} min: ~${secs / 3600 * cost_h:.3f}")
+            _terminate(api, pod_id, t_create, cost_h, run_id, job)
         ledger.write("run.end", {"outcome": outcome, "units": job.units_count, "units_name": job.units_name},
                      job=run_id, refs={"name": job.name, "workload": job.workload})
         log.close()
     return run_id, outcome
+
+
+def _terminate(api, pod_id, t_create, cost_h, run_id, job):
+    for attempt in range(5):
+        try:
+            api.terminate_pod(pod_id)
+            break
+        except RunpodError as e:
+            print(f"terminate failed ({e}); retrying")
+            time.sleep(5)
+    secs = _now() - t_create
+    ledger.write("pod.terminate", {"pod": pod_id}, job=run_id)
+    ledger.write("spend", {"provider": "runpod", "pod": pod_id, "seconds": round(secs), "usd_per_h": cost_h,
+                           "usd": round(secs / 3600 * cost_h, 4), "basis": "computed", "accuracy": "estimated"},
+                 job=run_id, refs={"name": job.name, "workload": job.workload})
+    print(f"pod {pod_id} terminated after {secs / 60:.1f} min: ~${secs / 3600 * cost_h:.3f}")
 
 
 def _salvage(remote, job):

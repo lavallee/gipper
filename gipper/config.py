@@ -19,7 +19,7 @@ DEFAULTS = {
     "daily_cap_usd": 5.0,           # refuse a new pod if today's spend + estimate exceeds this
     "default_job_cap_usd": 2.0,     # a job without its own budget gets this
     "default_max_hours": 3.0,
-    "image": "runpod/base:1.4.1-cuda1300-ubuntu2404",
+    "image": "runpod/base:1.4.1-ubuntu2404",   # no CUDA in the image: torch wheels bring their own
     "cuda_versions": [],            # no host filter: it empties the market; bootstrap picks a matching torch build
     "cloud": "COMMUNITY",           # COMMUNITY or SECURE
     "container_disk_gb": 40,

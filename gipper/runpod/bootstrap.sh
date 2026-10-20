@@ -9,13 +9,17 @@ fi
 if [ -d /workspace ] && [ -w /workspace ]; then
   export HF_HOME="${HF_HOME:-/workspace/hf}" UV_CACHE_DIR="${UV_CACHE_DIR:-/workspace/uv-cache}"
 fi
-# The PyTorch wheel index that matches this host's driver: jobs install torch with
-#   uv pip install torch --index-url "$GIPPER_TORCH_INDEX"
-_cuda=$(nvidia-smi 2>/dev/null | sed -n 's/.*CUDA Version: \([0-9]*\)\.\([0-9]*\).*/\1\2/p' | head -1)
-if   [ "${_cuda:-0}" -ge 130 ]; then GIPPER_TORCH_INDEX=https://download.pytorch.org/whl/cu130
-elif [ "${_cuda:-0}" -ge 128 ]; then GIPPER_TORCH_INDEX=https://download.pytorch.org/whl/cu128
-elif [ "${_cuda:-0}" -ge 126 ]; then GIPPER_TORCH_INDEX=https://download.pytorch.org/whl/cu126
-else GIPPER_TORCH_INDEX=https://download.pytorch.org/whl/cu124; fi
+# The PyTorch wheel index that matches this host's *driver* (not what nvidia-smi
+# reports as "CUDA Version": images with CUDA forward-compat libraries inflate
+# that). Jobs install torch with: uv pip install torch --index-url "$GIPPER_TORCH_INDEX"
+_drv=$(nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null | head -1 | cut -d. -f1)
+_drv=${_drv:-0}
+if   [ "$_drv" -ge 580 ]; then _cuda=130
+elif [ "$_drv" -ge 570 ]; then _cuda=128
+elif [ "$_drv" -ge 560 ]; then _cuda=126
+elif [ "$_drv" -ge 550 ]; then _cuda=124
+else _cuda=121; fi
+GIPPER_TORCH_INDEX=https://download.pytorch.org/whl/cu$_cuda
 export GIPPER_TORCH_INDEX
-echo "gipper: host CUDA ${_cuda:-?}, torch index $GIPPER_TORCH_INDEX"
+echo "gipper: driver $_drv -> torch cu$_cuda ($GIPPER_TORCH_INDEX)"
 nvidia-smi --query-gpu=name,memory.total,driver_version --format=csv,noheader 2>/dev/null | sed 's/^/gipper: gpu /'
