@@ -1,13 +1,16 @@
 """gipper: GPU work for the estate.
 
-    gipper pod gpus [--min-mem GB] [--cloud COMMUNITY|SECURE]   types that fit, live prices
-    gipper pod estimate JOB.toml [--throughput U/S]             what a run would cost
-    gipper pod run JOB.toml [--dry-run] [--gpu TYPE]            rent, run, collect, terminate
-    gipper pod ls                                               gipper's pods now running
-    gipper pod reap [--dry-run]                                 end pods gipper forgot
+    gipper pod gpus [--min-mem GB] [--region US,CA] [--udp] [--provider P]   offers across markets
+    gipper pod estimate JOB.toml [--throughput U/S] [--provider P]           what a run would cost
+    gipper pod run JOB.toml [--dry-run] [--gpu NAME] [--provider P]          rent, run, collect, terminate
+    gipper pod ls                                               gipper's machines now running, every provider
+    gipper pod reap [--dry-run]                                 end machines gipper forgot
     gipper pod cost [--since YYYY-MM-DD]                        spend per job from the ledger
-    gipper pod account                                          balance and spend limit
+    gipper pod account                                          balance per provider
     gipper ledger [--since YYYY-MM-DD] [--job ID]               raw receipts
+
+Providers: runpod, vast, shadeform (keys RUNPOD_API_KEY, VAST_API_KEY,
+SHADEFORM_API_KEY in gipper/.env). Vast and Shadeform list offers without a key.
 """
 import argparse
 import json
@@ -15,41 +18,68 @@ import sys
 from collections import defaultdict
 
 
+def _providers():
+    from gipper.config import settings
+    from gipper.providers import load
+    return [load(n) for n in settings()["providers"]]
+
+
 def _pod(args):
-    from gipper.runpod.api import Api
     if args.cmd == "gpus":
-        from gipper.runpod.select import candidates
-        rows = candidates(Api().gpu_types(), args.min_mem, args.cloud)
-        print(f"{'gpu':40s} {'GB':>4s} {'$/h':>6s}  stock")
-        for g, p, stock in rows:
-            print(f"{g['id'][:40]:40s} {g['memoryInGb']:>4} {p:>6.2f}  {stock or '-'}")
+        from gipper import market
+        from gipper.job import Job
+        job = Job(name="gpus", workload="-", command="-", min_mem_gb=args.min_mem, cloud=args.cloud,
+                  regions=[r.strip().upper() for r in (args.region or "").split(",") if r.strip()],
+                  ports=["9/udp"] if args.udp else [])
+        offers, notes = market.shop(job, names=[args.provider] if args.provider else None, keyed_only=False)
+        keyed = {p.name for p in _providers() if p.has_key()}
+        print(f"{'provider':10s} {'gpu':34s} {'GB':>4s} {'$/h':>6s}  {'stock':6s} where")
+        for o in offers[:args.limit]:
+            print(f"{o.provider:10s} {o.gpu[:34]:34s} {o.mem_gb:>4.0f} {o.usd_h:>6.2f}  {o.stock or '-':6s} {o.where}"
+                  + ("" if o.provider in keyed else "  (no key)"))
+        for n in notes:
+            print(f"note: {n}")
         return
     if args.cmd == "account":
-        a = Api().account()
-        print(f"balance ${a['clientBalance']:.2f}; spending ${a['currentSpendPerHr']:.2f}/h now; spend limit {a['spendLimit']}")
+        for p in _providers():
+            if not p.has_key():
+                print(f"{p.name:10s} no {p.key_name}")
+                continue
+            try:
+                print(f"{p.name:10s} {p.account()}")
+            except Exception as e:
+                print(f"{p.name:10s} error: {e}")
         return
     if args.cmd in ("estimate", "run"):
+        from gipper import run as runmod
         from gipper.job import load
-        from gipper.runpod import run as runmod
         job = load(args.job)
         if args.cmd == "estimate":
-            c = runmod.pick_gpu(Api(), job)
-            for g, p, stock in c[:6]:
-                e = runmod.estimate(job, p, args.throughput)
-                print(f"{g['id'][:40]:40s} ${p:.2f}/h  ~{e['wall_s'] / 60:.0f} min  ~${e['usd']:.3f}  ({e['basis']}; stock {stock or '-'})")
+            offers, ceiling, notes = runmod.plan(job, provider=args.provider)
+            for o in offers[:8]:
+                e = runmod.estimate(job, o.usd_h, args.throughput)
+                print(f"{o.provider:10s} {o.gpu[:30]:30s} ${o.usd_h:.2f}/h  ~{e['wall_s'] / 60:.0f} min  ~${e['usd']:.3f}  "
+                      f"({e['basis']}; {o.where}; stock {o.stock or '-'})")
+            print(f"price ceiling ${ceiling:.2f}/h" + "".join(f"\nnote: {n}" for n in notes))
             return
-        _, outcome = runmod.run(job, dry_run=args.dry_run, gpu_override=args.gpu, throughput=args.throughput)
+        _, outcome = runmod.run(job, dry_run=args.dry_run, gpu_override=args.gpu, provider=args.provider,
+                                throughput=args.throughput)
         sys.exit(0 if outcome in ("succeeded", None) or args.dry_run else 1)
     if args.cmd == "ls":
-        for p in Api().list_pods():
-            if (p.get("name") or "").startswith("gipper-"):
-                print(f"{p['id']}  {p['name']}  {p.get('desiredStatus')}  ${p.get('costPerHr')}/h  since {p.get('lastStartedAt')}")
+        for p in _providers():
+            if not p.has_key():
+                continue
+            try:
+                for m in p.list_ours():
+                    print(f"{p.name:10s} {m['id']}  {m['name']}  {m.get('status')}  ${m.get('usd_h')}/h")
+            except Exception as e:
+                print(f"{p.name:10s} error: {e}")
         return
     if args.cmd == "reap":
-        from gipper.runpod.reap import reap
+        from gipper.reap import reap
         acted = reap(dry_run=args.dry_run)
-        for pid, name, why in acted:
-            print(f"{'would end' if args.dry_run else 'ended'} {pid} {name}: {why}")
+        for prov, pid, name, why in acted:
+            print(f"{'would end' if args.dry_run else 'ended'} {prov} {pid} {name}: {why}")
         if not acted:
             print("nothing to reap")
         return
@@ -76,18 +106,24 @@ def main(argv=None):
     sys.stdout.reconfigure(line_buffering=True)  # live output when redirected to a file
     ap = argparse.ArgumentParser(prog="gipper", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="group")
-    pod = sub.add_parser("pod", help="rented GPUs (Runpod)")
+    pod = sub.add_parser("pod", help="rented GPUs (Runpod, Vast, Shadeform)")
     ps = pod.add_subparsers(dest="cmd", required=True)
+    providers = ["runpod", "vast", "shadeform"]
     g = ps.add_parser("gpus")
     g.add_argument("--min-mem", type=float, default=16)
-    g.add_argument("--cloud", default="COMMUNITY", choices=["COMMUNITY", "SECURE"])
+    g.add_argument("--region", help="ISO country codes, comma-separated (US,CA)")
+    g.add_argument("--udp", action="store_true", help="only providers that can expose UDP ports")
+    g.add_argument("--provider", choices=providers)
+    g.add_argument("--cloud", default="COMMUNITY", choices=["COMMUNITY", "SECURE"], help="Runpod cloud to start from")
+    g.add_argument("--limit", type=int, default=30)
     for name in ("estimate", "run"):
         p = ps.add_parser(name)
         p.add_argument("job")
         p.add_argument("--throughput", type=float, help="units per second, if known")
+        p.add_argument("--provider", choices=providers, help="shop only this provider")
         if name == "run":
             p.add_argument("--dry-run", action="store_true")
-            p.add_argument("--gpu", help="force a GPU type id")
+            p.add_argument("--gpu", help="only this GPU (e.g. \"RTX 4090\")")
     ps.add_parser("ls")
     ps.add_parser("account")
     r = ps.add_parser("reap")

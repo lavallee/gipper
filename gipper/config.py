@@ -1,9 +1,10 @@
-"""Paths, settings and the one secret.
+"""Paths, settings and the provider keys.
 
-The Runpod key comes from the environment or gipper's .env (mode 600, git-ignored)
-and only ever travels in an Authorization header: never logged, printed, written
-elsewhere or passed on a command line. `redact()` scrubs it from any text that
-might be shown or recorded.
+Each provider key (RUNPOD_API_KEY, VAST_API_KEY, SHADEFORM_API_KEY) comes from the
+environment or gipper's .env (mode 600, git-ignored) and only ever travels in a
+request header: never logged, printed, written elsewhere or passed on a command
+line. `redact()` scrubs every one of them from any text that might be shown or
+recorded.
 """
 import os
 import tomllib
@@ -19,7 +20,10 @@ DEFAULTS = {
     "daily_cap_usd": 5.0,           # refuse a new pod if today's spend + estimate exceeds this
     "default_job_cap_usd": 2.0,     # a job without its own budget gets this
     "default_max_hours": 3.0,
-    "image": "runpod/base:1.4.1-ubuntu2404",   # no CUDA in the image: torch wheels bring their own
+    "image": "runpod/base:1.4.1-ubuntu2404",   # Runpod's default; no CUDA in the image: torch wheels bring their own
+    "vast_image": "vastai/base-image:@vastai-automatic-tag",   # Vast picks the tag that fits the host
+    "providers": ["runpod", "vast", "shadeform"],   # markets to shop; those without a key are skipped
+    "regions": [],                  # ISO country codes a job may run in by default; empty = anywhere
     "cuda_versions": [],            # no host filter: it empties the market; bootstrap picks a matching torch build
     "cloud": "COMMUNITY",           # COMMUNITY or SECURE
     "container_disk_gb": 40,
@@ -45,17 +49,26 @@ def _dotenv(path):
     return out
 
 
+KEYS = ("RUNPOD_API_KEY", "VAST_API_KEY", "SHADEFORM_API_KEY")
+
+
+def secret(name, required=True):
+    key = os.environ.get(name) or _dotenv(Path(os.environ.get("GIPPER_ENV", ROOT / ".env"))).get(name)
+    if not key and required:
+        raise SystemExit(f"{name} is not set (environment or gipper/.env)")
+    return key or None
+
+
 def runpod_key():
-    key = os.environ.get("RUNPOD_API_KEY") or _dotenv(Path(os.environ.get("GIPPER_ENV", ROOT / ".env"))).get("RUNPOD_API_KEY")
-    if not key:
-        raise SystemExit("RUNPOD_API_KEY is not set (environment or gipper/.env)")
-    return key
+    return secret("RUNPOD_API_KEY")
 
 
 def redact(text):
-    """Remove the key from text before it is shown or recorded."""
-    try:
-        key = runpod_key()
-    except SystemExit:
+    """Remove every provider key from text before it is shown or recorded."""
+    if not isinstance(text, str):
         return text
-    return text.replace(key, "<redacted>") if key and isinstance(text, str) else text
+    for name in KEYS:
+        key = secret(name, required=False)
+        if key:
+            text = text.replace(key, "<redacted>")
+    return text

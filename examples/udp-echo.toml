@@ -1,0 +1,29 @@
+# Prove a market's UDP path end to end: a UDP echo on 5004 for five minutes.
+# While it runs, from here: echo hi | nc -u -w2 <GIPPER_PUBLIC_IP> <GIPPER_PORT_5004_UDP>
+# (both printed in the log as "port 5004/udp -> host:port").
+name = "udp-echo"
+workload = "gipper-smoke"
+
+[gpu]
+min_mem_gb = 8
+regions = ["US", "CA"]
+
+[pod]
+ports = ["5004/udp"]
+
+[run]
+command = """python3 -c '
+import os, socket, time
+print("echo on", os.environ["GIPPER_PUBLIC_IP"], os.environ["GIPPER_PORT_5004_UDP"], flush=True)
+s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM); s.bind(("0.0.0.0", 5004)); s.settimeout(1)
+end = time.time() + 300
+while time.time() < end:
+    try:
+        data, peer = s.recvfrom(2048); s.sendto(data, peer); print("echoed", data, "to", peer, flush=True)
+    except socket.timeout:
+        pass
+'"""
+
+[budget]
+max_usd = 0.10
+max_hours = 0.25

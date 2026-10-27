@@ -1,5 +1,5 @@
-"""The job spec: one TOML file, shared by every executor (Runpod now; local and
-toronto in phase 2).
+"""The job spec: one TOML file, shared by every executor (rented GPUs from Runpod,
+Vast and Shadeform now; local and toronto in phase 2).
 
     name = "carla-cadence"
     workload = "voxhaul-compare"          # what this is, for throughput and Somm
@@ -8,14 +8,19 @@ toronto in phase 2).
 
     [gpu]
     min_mem_gb = 16
-    prefer = ["NVIDIA RTX A5000", "NVIDIA GeForce RTX 4090"]   # optional order
-    cloud = "COMMUNITY"                    # or SECURE
+    prefer = ["RTX A5000", "RTX 4090"]     # optional order; names match across providers
+    regions = ["US", "CA"]                 # ISO country codes it may run in; default anywhere
+    providers = ["vast", "runpod"]         # markets to shop; default all with a key
+    cloud = "COMMUNITY"                    # Runpod: COMMUNITY (then SECURE) or SECURE
     max_usd_per_h = 0.6                    # optional ceiling; default 2x the cheapest that fits
 
     [pod]                                  # optional overrides
-    image = "runpod/base:1.4.1-cuda1300-ubuntu2404"
+    image = "runpod/base:1.4.1-cuda1300-ubuntu2404"   # default: each provider's own
     container_disk_gb = 40
-    volume = "gipper-models"               # network volume name (pins the data centre)
+    volume = "gipper-models"               # Runpod network volume name (pins the data centre)
+    ports = ["5004/udp", "8080/tcp"]       # published; the job sees GIPPER_PUBLIC_IP and
+                                           # GIPPER_PORT_5004_UDP (the external port). UDP
+                                           # rules out Runpod.
 
     [env]                                  # non-secret environment for the job
     HF_HOME = "/root/hf"
@@ -67,11 +72,14 @@ class Job:
     sensitivity: str = "cloud-ok"
     min_mem_gb: float = 8
     prefer: list = field(default_factory=list)
+    regions: list = field(default_factory=list)
+    providers: list = field(default_factory=list)
     cloud: str = "COMMUNITY"
     max_usd_per_h: float | None = None
     image: str = ""
     container_disk_gb: int = 40
     volume: str | None = None
+    ports: list = field(default_factory=list)
     env: dict = field(default_factory=dict)
     inputs: list = field(default_factory=list)
     outputs: list = field(default_factory=list)
@@ -115,13 +123,21 @@ def load(path):
         name=d["name"], workload=d["workload"], command=run["command"], setup=run.get("setup", ""),
         units_name=units.get("name", "units"), units_count=units.get("count"), sensitivity=sens,
         min_mem_gb=float(gpu.get("min_mem_gb", 8)), prefer=list(gpu.get("prefer", [])),
-        cloud=gpu.get("cloud", s["cloud"]), max_usd_per_h=gpu.get("max_usd_per_h"), image=pod.get("image", s["image"]),
+        regions=[r.upper() for r in gpu.get("regions", s["regions"])], providers=list(gpu.get("providers", [])),
+        cloud=gpu.get("cloud", s["cloud"]), max_usd_per_h=gpu.get("max_usd_per_h"), image=pod.get("image", ""),
         container_disk_gb=int(pod.get("container_disk_gb", s["container_disk_gb"])), volume=pod.get("volume"),
+        ports=[str(p) for p in pod.get("ports", [])],
         env={k: str(v) for k, v in d.get("env", {}).items()},
         inputs=tr(d.get("inputs", []), "src"), outputs=tr(d.get("outputs", []), "dst"),
         checkpoint_src=ck.get("src"), checkpoint_every_s=int(ck.get("every_s", s["checkpoint_every_s"])),
         max_usd=float(budget.get("max_usd", s["default_job_cap_usd"])),
         max_hours=float(budget.get("max_hours", s["default_max_hours"])), path=path)
+    for p in job.ports:
+        num, _, proto = p.partition("/")
+        if not num.isdigit() or proto.lower() not in ("", "tcp", "udp", "http"):
+            raise JobError(f"{path.name}: ports look like \"5004/udp\" or \"8080/tcp\", got {p!r}")
+    if job.volume and job.providers and job.providers != ["runpod"]:
+        raise JobError(f"{path.name}: a network volume is a Runpod thing; set providers = [\"runpod\"]")
     for t in job.inputs:
         if not Path(t.src).exists():
             raise JobError(f"{path.name}: input {t.src} does not exist")

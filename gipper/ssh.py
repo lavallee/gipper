@@ -1,4 +1,4 @@
-"""ssh to a pod with gipper's own key; files move as tar streams over the same
+"""ssh to a rented machine with gipper's own key; files move as tar streams over the same
 connection (no rsync or Runpod CLI needed on either side)."""
 import shlex
 import subprocess
@@ -20,6 +20,11 @@ def ensure_key():
 class Remote:
     def __init__(self, host, port, user="root"):
         self.host, self.port, self.user = host, int(port), user
+
+    @property
+    def home(self):
+        """Containers log in as root; VMs (Shadeform) as an ordinary user."""
+        return "/root" if self.user == "root" else f"/home/{self.user}"
 
     def _base(self):
         return ["ssh", "-i", str(KEY), "-p", str(self.port), "-o", "StrictHostKeyChecking=no",
