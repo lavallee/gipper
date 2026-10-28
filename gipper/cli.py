@@ -16,6 +16,7 @@ SHADEFORM_API_KEY in gipper/.env). Vast and Shadeform list offers without a key.
 """
 import argparse
 import json
+import signal
 import sys
 from collections import defaultdict
 
@@ -166,6 +167,7 @@ def _pod(args):
 
 def main(argv=None):
     sys.stdout.reconfigure(line_buffering=True)  # live output when redirected to a file
+    signal.signal(signal.SIGPIPE, signal.SIG_DFL)  # `gipper pod hosts | head` ends quietly
     ap = argparse.ArgumentParser(prog="gipper", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="group")
     pod = sub.add_parser("pod", help="rented GPUs (Runpod, Vast, Shadeform)")
