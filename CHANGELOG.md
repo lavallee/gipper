@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.2.1 (2026-10-28)
+
+Everything from the 0.1 placement work (the `codex/workload-placement-20261027`
+branch) is available again, on top of 0.2's model:
+
+- **`profile = "interactive"` with `objective = "latency"`:** offers rank by
+  measured round trip (`measured_rtt_ms_by_machine`, `latency_target`), then
+  `preferred_countries`, then distance (`near_latitude`/`near_longitude`), then
+  the usual score. `max_rtt_ms` and `max_distance_km` fail closed when nothing
+  was measured.
+- **Restored fields:** `min_dlperf` (Vast's DLPerf as a filter),
+  `client_upload_mbps` and `client_download_mbps` (caps on this end's link),
+  `fallback_mbps`.
+- **0.1 names in every estimate:** `estimated_total_usd`,
+  `estimated_bandwidth_usd`, `known_bandwidth_usd`, `bandwidth_fees_known`,
+  `cost_is_lower_bound`, `setup_download_s`, `upload_s`, `download_s`,
+  `compute_s`, `dlperf`, `assumptions` and the rest, so reports that read
+  estimate receipts keep their fields. `offer.placement_estimate`,
+  `placement.estimate_offer` and `placement.rank_for_job` work again.
+- **Vast doc captures** behind the placement docs are in `docs/sources/vast/`.
+
 ## 0.2.0 (2026-10-28)
 
 Offers are judged on the whole run, and gipper learns from its own rentals.
@@ -29,9 +50,9 @@ Offers are judged on the whole run, and gipper learns from its own rentals.
 - **Kept from fodder's 0.1 additions:** verified teardown, the `cuInit` check
   with its 804 retry, and the optional transfer probe.
 - **Removed:** the default 2× hourly ceiling (the score prices the run; an
-  explicit `[gpu] max_usd_per_h` still caps it), placement's latency and
-  geography fields (unused), and `docs/workload-placement.md` (now
-  `docs/placement.md`).
+  explicit `[gpu] max_usd_per_h` still caps it), and `docs/workload-placement.md`
+  (now `docs/placement.md`). Placement's latency and geography fields were
+  removed here and restored in 0.2.1.
 - **Docs:** README, `docs/placement.md`, `docs/clients.md`, `docs/lessons.md`,
   `AGENTS.md`.
 

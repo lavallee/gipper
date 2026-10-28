@@ -56,6 +56,42 @@ probe never counts: a 2 MiB probe mostly measures ssh start-up, so it reads low.
 | `auto` (default) | `hour_value_usd`, $3 | most work |
 | `cost` | $0 (failures still cost) | batch work nobody is waiting on |
 | `time` | $50 | someone is waiting |
+| `latency` (with `profile = "interactive"`) | $3, after nearness | real-time work: see below |
+
+## Real-time work
+
+```toml
+[placement]
+profile = "interactive"                         # objective defaults to "latency"
+latency_target = "toronto-unreal-host"          # where the RTTs below were measured from
+measured_rtt_ms_by_machine = { "vast:machine:12345" = 28 }
+max_rtt_ms = 50                                 # unmeasured offers fail this
+preferred_countries = ["CA", "US"]
+near_latitude = 43.65                           # with max_distance_km: offers without
+near_longitude = -79.38                         # coordinates fail it
+max_distance_km = 1500
+```
+
+After `prefer` and stock, offers rank by measured round trip (measured ones
+first, lowest first), then by position in `preferred_countries`, then by
+distance, then by the usual score. RTTs are what the job file says, measured
+from `latency_target` to that machine; gipper doesn't probe or age them, so
+re-measure before relying on them. Country and distance are proxies for
+nearness, not round trips. Vast doesn't publish host coordinates, so a
+`max_distance_km` limit currently leaves no Vast offers.
+
+## Other fields
+
+- `min_dlperf`: a floor on Vast's DLPerf, a generic provider score. It filters
+  offers; it is never read as this workload's speed.
+- `client_upload_mbps` / `client_download_mbps`: caps on this end's link, for
+  when it's slower than the host's.
+- `fallback_mbps` (100): the link speed when nothing is advertised or measured.
+
+Every estimate also carries the field names 0.1's placement used
+(`estimated_total_usd`, `bandwidth_fees_known`, `cost_is_lower_bound`,
+`setup_download_s`, `assumptions`, ...), so reports reading estimate receipts
+or `offer.placement_estimate` keep working.
 
 Settings live in `~/.config/gipper/config.toml`: `hour_value_usd`,
 `failure_cost_usd` ($1) and `history_days` (90).

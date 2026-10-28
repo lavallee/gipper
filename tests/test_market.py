@@ -28,3 +28,17 @@ def test_preference_then_stock_then_price():
     cheap, dear = _o("vast", "RTX 3090", 0.20), _o("vast", "RTX 4090", 0.40)
     assert [o.gpu for o in rank([unknown, dear, cheap])] == ["RTX 3090", "RTX 4090", "NVIDIA RTX A5000"]
     assert rank([unknown, dear, cheap], prefer=["RTX 4090"])[0].gpu == "RTX 4090"
+
+
+def test_interactive_jobs_go_to_the_measured_nearest_host():
+    from gipper.job import Job
+    from gipper.placement import load_placement
+    p = load_placement({"profile": "interactive", "latency_target": "toronto", "preferred_countries": ["CA"],
+                        "measured_rtt_ms_by_machine": {"vast:machine:far": 90, "vast:machine:near": 20}})
+    job = Job(name="x", workload="w", command="true", placement=p)
+    far = Offer("vast", "RTX 4090", 24, 0.30, country="US", stock="yes", ref={"machine": "far"})
+    near = Offer("vast", "RTX 4090", 24, 0.60, country="US", stock="yes", ref={"machine": "near"})
+    canada = Offer("vast", "RTX 4090", 24, 0.20, country="CA", stock="yes", ref={"machine": "unmeasured"})
+    assert [o.ref["machine"] for o in rank([canada, far, near], job=job)] == ["near", "far", "unmeasured"]
+    p.max_rtt_ms = 50   # a limit on round trip fails what wasn't measured
+    assert [o.ref["machine"] for o in admit([canada, far, near], placement=p)] == ["near"]

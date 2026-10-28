@@ -70,7 +70,14 @@ def test_client_jobs_from_0_1_still_load(tmp_path):
     assert p.objective == "cost" and p.compute_s_by_gpu == {"A40": 250} and p.min_cuda == 12.8
 
 
-@pytest.mark.parametrize("bad", ['[placement]\nlatency_target = "x"\n', '[placement]\nprofile = "interactive"\n',
+def test_interactive_profile_loads(tmp_path):
+    p = _job(tmp_path, BASE + '[placement]\nprofile = "interactive"\nlatency_target = "toronto"\nmax_rtt_ms = 50\n'
+                             'preferred_countries = ["ca", "us"]\n[placement.measured_rtt_ms_by_machine]\n"vast:machine:7" = 28\n').placement
+    assert p.objective == "latency" and p.preferred_countries == ["CA", "US"]
+
+
+@pytest.mark.parametrize("bad", ['[placement]\nobjective = "latency"\n', '[placement]\nmax_rtt_ms = 50\n',
+                                 '[placement]\nmax_distance_km = 500\n', '[placement]\nnot_a_field = 1\n',
                                  '[placement]\nobjective = "cheap"\n', '[placement]\nprobe_transfer_mb = 500\n',
                                  '[placement]\nmin_measured_upload_mbps = 5\n'])
 def test_placement_mistakes_are_refused(tmp_path, bad):

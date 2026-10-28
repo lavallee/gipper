@@ -51,6 +51,7 @@ def offers_from(rows, per_gpu=PER_GPU):
                                   "host_upload_usd_per_gb": o.get("inet_up_cost"),
                                   "cuda_max_good": o.get("cuda_max_good"),
                                   "compute_capability": cap / 100 if cap and cap >= 100 else cap,
+                                  "dlperf": o.get("dlperf"),
                                   "reliability": o.get("reliability")}))
     return out
 
@@ -73,7 +74,7 @@ class Vast(Provider):
              "direct_port_count": {"gte": 1 + len(job.ports)},   # ssh plus the job's own
              "type": "ondemand", "order": [["dph_total", "asc"]], "limit": 200,
              "allocated_storage": job.container_disk_gb}   # so dph_total includes the disk
-        for key, floor in (("inet_up", p.min_host_upload_mbps), ("cuda_max_good", p.min_cuda),
+        for key, floor in (("inet_up", p.min_host_upload_mbps), ("cuda_max_good", p.min_cuda), ("dlperf", p.min_dlperf),
                            ("compute_cap", p.min_compute_capability * 100 if p.min_compute_capability else None)):
             if floor:
                 q[key] = {"gte": floor}
