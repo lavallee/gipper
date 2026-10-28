@@ -179,7 +179,8 @@ def run(job, *, dry_run=False, log_dir=None, gpu_override=None, provider=None, t
             prov, offer, made = _rent(queue, job, pubkey, name)
             inst = {"provider": prov, "id": made["id"], "t": _now(), "usd_h": made["usd_h"] or offer.usd_h}
             ledger.write("pod.create", {"provider": prov.name, "pod": made["id"], "gpu": made["gpu"], "where": offer.where,
-                                        "machine": offer.ref.get("machine"), "usd_per_h": inst["usd_h"],
+                                        "machine": offer.ref.get("machine"), "country": offer.country,
+                                        "usd_per_h": inst["usd_h"],
                                         "deadline": inst["t"] + job.max_hours * 3600 + 600},
                          job=run_id, refs={"name": job.name})
             print(f"{prov.name} {made['id']} created: {made['gpu']}, {offer.where}, ${inst['usd_h']:.3f}/h; waiting for ssh")
@@ -191,6 +192,10 @@ def run(job, *, dry_run=False, log_dir=None, gpu_override=None, provider=None, t
                 ledger.write("pod.ready", {"provider": prov.name, "pod": made["id"], "after_s": round(_now() - inst["t"]),
                                            "machine": info.get("machine"), "gpu": info.get("gpu"),
                                            "ports": info.get("ports")}, job=run_id)
+                from gipper.latency import HERE, connect_ms
+                ledger.write("host.rtt", {"provider": prov.name, "pod": made["id"], "machine": info.get("machine"),
+                                          "origin": HERE, "ms": connect_ms(remote.host, remote.port),
+                                          "basis": "fastest of 5 TCP connects to the ssh port"}, job=run_id)
                 health = preflight(remote)
                 ledger.write("host.ok", {"pod": made["id"], **health}, job=run_id)
                 from gipper.cuda_probe import check as cuda_check, CudaProbeError

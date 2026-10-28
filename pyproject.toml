@@ -1,6 +1,6 @@
 [project]
 name = "gipper"
-version = "0.2.1"
+version = "0.2.2"
 description = "GPU work for the Lyra Forge estate: requests not claims, owned machines and rented GPUs, every second and dollar on the ledger"
 requires-python = ">=3.12"
 dependencies = []  # stdlib only

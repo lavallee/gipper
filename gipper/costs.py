@@ -61,10 +61,10 @@ def estimate(job, offer, history, *, throughput=None):
     basis["setup"] = "job" if p.setup_s is not None else "default"
 
     up_gb = p.upload_gb if p.upload_gb is not None else input_gb(job)
-    up_mbps, basis["upload"] = _mbps(history.mbps(offer.provider, machine, "up"), m.get("host_download_mbps"), p,
-                                     p.client_upload_mbps)
-    down_mbps, basis["download"] = _mbps(history.mbps(offer.provider, machine, "down"), m.get("host_upload_mbps"), p,
-                                         p.client_download_mbps)
+    up_mbps, basis["upload"] = _mbps(history.mbps(offer.provider, machine, "up", offer.country),
+                                     m.get("host_download_mbps"), p, p.client_upload_mbps)
+    down_mbps, basis["download"] = _mbps(history.mbps(offer.provider, machine, "down", offer.country),
+                                         m.get("host_upload_mbps"), p, p.client_download_mbps)
     fetch_mbps, basis["fetch"] = _mbps(None, m.get("host_download_mbps"), p)  # host <- internet: no client cap
     upload, download = up_gb * 8000 / up_mbps, p.download_gb * 8000 / down_mbps
     fetch = p.setup_download_gb * 8000 / fetch_mbps
@@ -97,7 +97,8 @@ def estimate(job, offer, history, *, throughput=None):
     lost_h = (ready + PREFLIGHT_S) / 3600
     risk = p_fail * (s["failure_cost_usd"] + lost_h * (offer.usd_h + hour_value))
     score = expected + risk + hour_value * wall / 3600
-    from gipper.placement import distance_km, rtt_ms
+    from gipper.placement import best_rtt, distance_km
+    rtt, rtt_basis = best_rtt(offer, p, history)
     phases = {"ready": round(ready), "setup": round(setup), "upload": round(upload), "fetch": round(fetch),
               "compute": round(compute), "download": round(download)}
     legacy = {   # 0.1's names, read by clients' reports
@@ -110,12 +111,14 @@ def estimate(job, offer, history, *, throughput=None):
         "host_download_mbps": m.get("host_download_mbps"), "host_upload_mbps": m.get("host_upload_mbps"),
         "host_download_usd_per_gb": fee_in, "host_upload_usd_per_gb": fee_out,
         "effective_upload_mbps": round(up_mbps, 1), "effective_download_mbps": round(down_mbps, 1),
-        "dlperf": m.get("dlperf"), "measured_rtt_ms": rtt_ms(offer, p), "latency_target": p.latency_target or None,
+        "dlperf": m.get("dlperf"), "measured_rtt_ms": rtt if rtt_basis == "measured" else None,
+        "latency_target": p.latency_target or None,
         "distance_km": round(distance_km(offer, p), 2) if distance_km(offer, p) is not None else None,
         "assumptions": [f"{k} from {v}" for k, v in basis.items()]
                        + ([] if fees_known else ["bandwidth fees not advertised: total is a lower bound"]),
     }
     return {**legacy, "wall_s": round(wall), "usd": round(expected, 4), "score": round(score, 4),
+            "rtt_ms": rtt, "rtt_basis": rtt_basis,
             "phases_s": phases,
             "rental_usd": round(rental, 4), "bandwidth_usd": round(bandwidth, 4), "bandwidth_known": fees_known,
             "billing_factor": factor, "p_fail": round(p_fail, 3), "risk_usd": round(risk, 4),

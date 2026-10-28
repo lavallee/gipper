@@ -7,7 +7,7 @@ today, Runpod and Vast.ai (Shadeform is wired in but unused), and it learns from
 its own rentals: which providers and machines turn out bad, how fast transfers
 really go, how long a workload takes, and what providers actually bill.
 
-**Status: 0.2.1.** Rented GPUs from the CLI or Python, no daemon. Requests, leases
+**Status: 0.2.2.** Rented GPUs from the CLI or Python, no daemon. Requests, leases
 and pre-emption across owned machines (lisbon's 3060, toronto's M6) are the
 next phase: [orientation](plans/gipper/orientation.md) ·
 [architecture](plans/gipper/architecture.md) · [plan](plans/gipper/itemized-plan.md).
@@ -98,8 +98,10 @@ $0.69/h Runpod 4090 are 8 cents apart, less than the 25 cents a 23% chance of a
 bad host costs, so Runpod wins. On a ten-hour job they are $2.57 apart, and Vast
 wins. `prefer` still comes first, and an offer whose expected cost
 exceeds `max_usd` is left out. `[placement] objective = "cost"` stops valuing
-waiting (failures still cost); `"time"` values it at $50/h; real-time work uses
-`profile = "interactive"` to rank by measured round trip first.
+waiting (failures still cost); `"time"` values it at $50/h. Geography only
+matters to real-time work: `profile = "interactive"` pings candidate hosts
+before renting and ranks by round trip first. Batch work happily goes to
+Australia at night if it's cheaper.
 
 Memory is the ledger itself. A rental is *good* once its job started, and *bad*
 if the host was broken (busy GPU, CUDA that won't initialise, ssh that never came

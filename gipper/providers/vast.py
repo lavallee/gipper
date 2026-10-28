@@ -52,6 +52,7 @@ def offers_from(rows, per_gpu=PER_GPU):
                                   "cuda_max_good": o.get("cuda_max_good"),
                                   "compute_capability": cap / 100 if cap and cap >= 100 else cap,
                                   "dlperf": o.get("dlperf"),
+                                  "public_ip": o.get("public_ipaddr"),   # pingable before renting
                                   "reliability": o.get("reliability")}))
     return out
 

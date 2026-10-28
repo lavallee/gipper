@@ -72,13 +72,31 @@ near_longitude = -79.38                         # coordinates fail it
 max_distance_km = 1500
 ```
 
-After `prefer` and stock, offers rank by measured round trip (measured ones
-first, lowest first), then by position in `preferred_countries`, then by
-distance, then by the usual score. RTTs are what the job file says, measured
-from `latency_target` to that machine; gipper doesn't probe or age them, so
-re-measure before relying on them. Country and distance are proxies for
-nearness, not round trips. Vast doesn't publish host coordinates, so a
+After `prefer` and stock, offers rank by the best round-trip figure there is
+(offers with one first, lowest first), then by position in
+`preferred_countries`, then by distance, then by the usual score. The figure
+comes from, in order of trust:
+
+1. the job's own `measured_rtt_ms_by_machine`, measured from `latency_target`;
+2. a ping from this machine just before renting (`probe_rtt`, on by default for
+   interactive jobs; the 48 cheapest hosts, about 10 seconds; roughly 60% of
+   Vast hosts answer);
+3. memory of that machine's round trip from here (`host.rtt` on every rental,
+   `market.rtt` from earlier pings);
+4. the median round trip from here to hosts in its country.
+
+Only 1 counts as measured for `max_rtt_ms`, unless `latency_target = "here"`
+(the user is at this machine), when 2 counts too. Otherwise 2–4 are proxies:
+they rank offers but can't pass the limit.
+
+Country is the roughest proxy, and Vast's labels can be wrong: on 2026-10-28 a
+host listed in China answered in 81 ms from here, from an IP another host had
+listed as the United States. Vast doesn't publish host coordinates, so a
 `max_distance_km` limit currently leaves no Vast offers.
+
+Batch jobs (any objective but `latency`) ignore all of this. A cheap host on the
+other side of the world wins whenever the whole run costs less; its slower
+transfers are priced from link-speed memory, which is kept per country.
 
 ## Other fields
 

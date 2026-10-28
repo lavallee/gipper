@@ -29,9 +29,11 @@ round trip to where the user is, then preferred country, then distance, then the
 usual score:
 
     profile = "interactive"
-    latency_target = "toronto-unreal-host"            # names the client the RTTs were measured from
+    latency_target = "toronto-unreal-host"            # names the client the RTTs were measured from;
+                                                      # "here" means this machine, so its pings count
     measured_rtt_ms_by_machine = { "vast:machine:12345" = 28 }
     max_rtt_ms = 50                                   # needs a measurement: unmeasured offers fail it
+    probe_rtt = true                                  # ping candidates before renting (default for interactive)
     preferred_countries = ["CA", "US"]
     near_latitude = 43.65                             # with max_distance_km: offers without
     near_longitude = -79.38                           # coordinates fail it
@@ -75,6 +77,7 @@ class Placement:
     max_rtt_ms: float | None = None
     latency_target: str = ""
     measured_rtt_ms_by_machine: dict = field(default_factory=dict)
+    probe_rtt: bool | None = None        # default: on for interactive jobs
 
 
 def _number(v):
@@ -89,6 +92,7 @@ def load_placement(data, *, error=ValueError):
         raise error(f"[placement] has unknown fields: {', '.join(sorted(unknown))} (see gipper/placement.py)")
     if data.get("profile") == "interactive":
         data.setdefault("objective", "latency")
+        data.setdefault("probe_rtt", True)
     p = Placement(**data)
     if p.objective not in OBJECTIVES or p.profile not in ("batch", "interactive"):
         raise error(f"placement.profile is batch or interactive; objective one of {', '.join(OBJECTIVES)}")
@@ -140,10 +144,39 @@ def distance_km(offer, p):
     return 6371.0088 * 2 * math.asin(min(1, math.sqrt(h)))
 
 
+def target_is_here(p):
+    from gipper.latency import HERE
+    return p.latency_target in ("here", HERE)
+
+
 def rtt_ms(offer, p):
-    """The job's measured round trip to this machine, if it has one."""
+    """A round trip that counts as measured from the job's latency_target: the job's
+    own measurement, or a ping from here when the target is here."""
     machine = offer.ref.get("machine")
-    return p.measured_rtt_ms_by_machine.get(f"{offer.provider}:machine:{machine}") if machine is not None else None
+    own = p.measured_rtt_ms_by_machine.get(f"{offer.provider}:machine:{machine}") if machine is not None else None
+    if own is not None:
+        return own
+    return offer.metrics.get("rtt_ms_here") if target_is_here(p) else None
+
+
+def best_rtt(offer, p, history=None):
+    """(ms, basis): the best round-trip figure there is for ranking. Measured from the
+    target first, then pinged from here just now, then memory of this machine, then
+    the median for its country, all from here."""
+    from gipper.latency import HERE
+    own = rtt_ms(offer, p)
+    if own is not None:
+        return own, "measured" if not target_is_here(p) or offer.metrics.get("rtt_ms_here") != own else "pinged from here"
+    if offer.metrics.get("rtt_ms_here") is not None:
+        return offer.metrics["rtt_ms_here"], "pinged from here (proxy)"
+    if history is not None:
+        v = history.rtt(offer.provider, offer.ref.get("machine"), HERE)
+        if v is not None:
+            return v, "memory of this machine"
+        v = history.country_rtt(offer.country, HERE)
+        if v is not None:
+            return v, f"memory of {offer.country}"
+    return None, "unknown"
 
 
 def estimate_offer(job, offer, *, upload_gb=None):

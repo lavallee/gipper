@@ -103,12 +103,14 @@ def rank(offers, prefer=(), providers=(), *, job=None, history=None, throughput=
         for o in offers:
             o.estimate = estimate(job, o, history, throughput=throughput)
     if job is not None and job.placement.objective == "latency":
-        from gipper.placement import distance_km, rtt_ms
+        from gipper.placement import distance_km
         p = job.placement
 
-        def near(o):   # measured round trip, then preferred country, then distance
-            rtt, km = rtt_ms(o, p), distance_km(o, p)
+
+        def near(o):   # best round-trip figure, then preferred country, then distance
+            rtt = o.estimate.get("rtt_ms")
             country = p.preferred_countries.index(o.country) if o.country in p.preferred_countries else len(p.preferred_countries)
+            km = distance_km(o, p)
             return (rtt is None, rtt if rtt is not None else 0, country, km if km is not None else float("inf"))
         return sorted(offers, key=lambda o: (pref_rank(o), o.stock is None, *near(o), o.estimate.get("score", o.usd_h),
                                              prov.get(o.provider, len(prov))))
@@ -151,5 +153,27 @@ def shop(job, *, names=None, keyed_only=True, history=None, throughput=None):
             offers += p.offers(job)
         except (Exception, SystemExit) as e:  # one market's outage (or missing key) must not stop the others
             notes.append(f"{name}: {e}")
+    if job.placement.probe_rtt:
+        notes += probe_rtt(admit(offers, min_mem_gb=job.min_mem_gb, regions=job.regions, ports=job.ports))
     offers = admit(offers, min_mem_gb=job.min_mem_gb, regions=job.regions, ports=job.ports, placement=job.placement)
     return rank(offers, job.prefer, names, job=job, history=history, throughput=throughput), notes
+
+
+PROBE_LIMIT = 48   # hosts pinged per shop, cheapest first
+
+
+def probe_rtt(offers):
+    """Ping the cheapest offers' hosts from here before renting, into
+    metrics["rtt_ms_here"], and remember the readings (a `market.rtt` receipt)."""
+    from gipper import ledger
+    from gipper.latency import HERE, ping_all
+    pick = sorted((o for o in offers if o.metrics.get("public_ip")), key=lambda o: o.usd_h)[:PROBE_LIMIT]
+    if not pick:
+        return []
+    found = ping_all(o.metrics["public_ip"] for o in pick)
+    for o in pick:
+        o.metrics["rtt_ms_here"] = found.get(o.metrics["public_ip"])
+    samples = [{"provider": o.provider, "machine": o.ref.get("machine"), "country": o.country,
+                "ms": o.metrics["rtt_ms_here"]} for o in pick if o.metrics["rtt_ms_here"] is not None]
+    ledger.write("market.rtt", {"origin": HERE, "samples": samples})
+    return [f"pinged {len(pick)} host(s) from {HERE}: {len(samples)} answered"]

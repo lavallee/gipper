@@ -2,6 +2,15 @@
 
 Newest first. Each lesson is either built into gipper now or noted as advice for jobs.
 
+## 2026-10-28: round trips (0.2.2)
+
+- **Hosts can be measured before renting.** Vast publishes each host's public IP;
+  pinging the 48 cheapest from lisbon took about 10 seconds, and 31 answered
+  (Quebec 28 ms, Oregon 83 ms, South Korea 205 ms, Thailand 267 ms).
+- **Vast's country labels aren't reliable.** A host listed in China answered in
+  81 ms from an IP another host had listed as the United States. Measured round
+  trips outrank the label.
+
 ## 2026-10-28: memory and bills (0.2)
 
 - **Bills differ from rate × lifetime, and not evenly.** Over 107 machines,

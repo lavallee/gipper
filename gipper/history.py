@@ -49,6 +49,7 @@ class Rental:
     ts: float
     machine: str | None = None
     gpu: str | None = None
+    country: str | None = None
     ready_s: float | None = None
     started: float | None = None        # run.start time
     ended: float | None = None          # job exit (or collect, for older receipts)
@@ -74,9 +75,10 @@ def _median(xs):
 
 
 class History:
-    def __init__(self, rentals, workloads):
+    def __init__(self, rentals, workloads, rtts=()):
         self.rentals = rentals            # [Rental]
         self.workloads = workloads        # job id -> workload
+        self.rtts = list(rtts)            # [(provider, machine, country, origin, ms)]
         self._by = defaultdict(list)
         for r in rentals:
             self._by[r.provider].append(r)
@@ -87,15 +89,20 @@ class History:
     def load(cls, days=None, records=None):
         days = settings()["history_days"] if days is None else days
         recs = records if records is not None else ledger.read(since=time.time() - days * 86400)
-        rentals, workloads, current, billed = {}, {}, {}, {}
+        rentals, workloads, current, billed, rtts = {}, {}, {}, {}, []
         for r in recs:
             p, kind, job = r["payload"], r["kind"], r.get("job")
             if (r.get("refs") or {}).get("workload") and job:
                 workloads[job] = r["refs"]["workload"]
             key = (p.get("provider") or "runpod", str(p.get("pod"))) if p.get("pod") is not None else None
             if kind == "pod.create" and key:
-                rentals[key] = Rental(key[0], key[1], job, _ts(r), machine=_s(p.get("machine")), gpu=p.get("gpu"))
+                rentals[key] = Rental(key[0], key[1], job, _ts(r), machine=_s(p.get("machine")), gpu=p.get("gpu"),
+                                      country=p.get("country"))
                 current[job] = key
+                continue
+            if kind == "market.rtt":
+                rtts += [(x.get("provider"), _s(x.get("machine")), x.get("country"), p.get("origin"), x["ms"])
+                         for x in p.get("samples") or [] if x.get("ms") is not None]
                 continue
             if kind == "error" and job in current:
                 rent, err = rentals.get(current[job]), p.get("error", "")
@@ -137,6 +144,9 @@ class History:
                 rent.cleanup_pending = True
             elif kind == "pod.closure_verified":
                 rent.cleanup_pending = False
+            elif kind == "host.rtt" and p.get("ms") is not None:
+                rtts.append((rent.provider, rent.machine or _s(p.get("machine")), rent.country or p.get("country"),
+                             p.get("origin"), p["ms"]))
         for key, usd in billed.items():
             if key in rentals:
                 rentals[key].billed_usd = usd
@@ -145,7 +155,7 @@ class History:
                 rent.compute_s = None   # a capped, failed or interrupted run says nothing about how long it takes
             elif rent.compute_s is None and rent.started and rent.ended:
                 rent.compute_s = rent.ended - rent.started
-        return cls(list(rentals.values()), workloads)
+        return cls(list(rentals.values()), workloads, rtts)
 
     # ---------------------------------------------------------------- what it knows
     def rentals_of(self, provider, machine=None):
@@ -166,16 +176,31 @@ class History:
         return (_median([r.ready_s for r in self.rentals_of(provider, machine)]) if machine is not None else None) \
             or _median([r.ready_s for r in self.rentals_of(provider)])
 
-    def mbps(self, provider, machine, direction):
-        """Measured transfer speed from here (real transfers), the machine before its
+    def mbps(self, provider, machine, direction, country=None):
+        """Measured transfer speed from here (real transfers): this machine, then the
+        provider's machines in the same country (far hosts upload slower), then the
         provider; None if gipper hasn't timed one."""
         pick = (lambda r: r.up_mbps) if direction == "up" else (lambda r: r.down_mbps)
-        scopes = ((self.rentals_of(provider, machine),) if machine is not None else ()) + (self.rentals_of(provider),)
+        scopes = ((self.rentals_of(provider, machine),) if machine is not None else ()) + \
+                 (([r for r in self.rentals_of(provider) if r.country == country],) if country else ()) + \
+                 (self.rentals_of(provider),)
         for rs in scopes:
             v = _median([x for r in rs for x in pick(r)])
             if v:
                 return v
         return None
+
+    def rtt(self, provider, machine, origin):
+        """Median round trip from `origin` to this machine, from pings and rentals."""
+        if machine is None:
+            return None
+        return _median([ms for p, m, c, o, ms in self.rtts if p == provider and m == str(machine) and o == origin])
+
+    def country_rtt(self, country, origin):
+        """Median round trip from `origin` to any host in `country`."""
+        if not country:
+            return None
+        return _median([ms for p, m, c, o, ms in self.rtts if c == country and o == origin])
 
     def compute_s(self, workload, gpu):
         """Median compute seconds this workload took on this GPU before."""

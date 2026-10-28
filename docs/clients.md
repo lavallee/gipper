@@ -49,7 +49,8 @@ instead of silently patching nothing.
 
 ## Receipts a guard can rely on
 
-- `pod.create`: `provider`, `pod`, `machine`, `gpu`, `usd_per_h`, `deadline`
+- `pod.create`: `provider`, `pod`, `machine`, `country`, `gpu`, `usd_per_h`, `deadline`
+- `host.rtt`: round trip from `origin` (this machine's hostname) to the rented machine
 - `pod.closure_verified`: the provider no longer lists the machine. Until it
   appears there may be a `pod.termination_pending`; treat that machine as still
   billing.

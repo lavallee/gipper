@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.2.2 (2026-10-28)
+
+Round trips are measured and remembered; geography only steers work that needs it.
+
+- **Interactive jobs ping candidate hosts before renting** (`probe_rtt`, on by
+  default for `profile = "interactive"`): the 48 cheapest offers' public IPs,
+  from this machine, in about 10 seconds. About 60% of Vast hosts answer.
+- **Round-trip order of trust:** the job's own measurement from `latency_target`,
+  then a ping from here, then memory of that machine, then the median for its
+  country, then `preferred_countries`. Pings from here pass `max_rtt_ms` only
+  with `latency_target = "here"`; otherwise they rank but don't qualify.
+- **Every rental records `host.rtt`** (fastest of 5 TCP connects to its ssh
+  port), and `pod.create` records the offer's `country`. Shops for interactive
+  jobs record `market.rtt`.
+- **Link-speed memory is per country** before per provider, so far hosts' slower
+  transfers are priced from experience.
+- **Batch jobs ignore geography:** a cheap host on the far side of the world wins
+  whenever the whole run costs less.
+
 ## 0.2.1 (2026-10-28)
 
 Everything from the 0.1 placement work (the `codex/workload-placement-20261027`
