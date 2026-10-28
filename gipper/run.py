@@ -28,6 +28,10 @@ from gipper.ssh import ensure_key
 BOOTSTRAP = Path(__file__).with_name("bootstrap.sh")
 
 
+class CleanupPending(RuntimeError):
+    pass
+
+
 class Capped(Exception):
     pass
 
@@ -47,11 +51,29 @@ def plan(job, *, provider=None, gpu=None):
         raise SystemExit(f"no GPU{' ' + gpu if gpu else ''} with >= {job.min_mem_gb} GB{where}{udp} is on offer right now"
                          + "".join(f"\n  {n}" for n in notes))
     ceiling = market.ceiling(offers, job.max_usd_per_h, job.prefer)
+    if getattr(job, "placement", None) is not None:
+        # The hourly default must not discard the workload-cost winner.
+        if job.max_usd_per_h is None:
+            ceiling = max(ceiling, offers[0].usd_h)
+        eligible = [o for o in offers if o.usd_h <= ceiling]
+        if not eligible:
+            raise SystemExit("no placement-qualified offer fits the explicit hourly ceiling")
+        return eligible, ceiling, notes
     return [o for o in offers if o.usd_h <= ceiling] or offers[:1], ceiling, notes
 
 
-def estimate(job, gpu_price, throughput=None, setup_s=420):
+def estimate(job, gpu_price, throughput=None, setup_s=420, *, offer=None):
     """Wall seconds and dollars; throughput = units per second if known."""
+    if getattr(job, "placement", None) is not None and offer is not None:
+        from gipper.placement import estimate_offer
+        result = estimate_offer(job, offer)
+        if throughput and job.units_count:
+            result["wall_s"] += job.units_count / throughput - result["compute_s"]
+            result["compute_s"] = job.units_count / throughput
+            result["rental_usd"] = round(result["wall_s"] * gpu_price / 3600, 6)
+            result["usd"] = result["estimated_total_usd"] = round(result["rental_usd"] + result["known_bandwidth_usd"], 6)
+            result["assumptions"].append("estimate compute overridden by explicit units/throughput; offer ranking used profile compute")
+        return {**result, "basis": "placement", "offer_metrics": offer.metrics, "offer_ref": offer.ref}
     if throughput and job.units_count:
         wall = setup_s + job.units_count / throughput
         basis = "throughput"
@@ -98,7 +120,7 @@ def run(job, *, dry_run=False, log_dir=None, gpu_override=None, provider=None, t
     for n in notes:
         print(f"note: {n}")
     best = offers[0]
-    est = estimate(job, best.usd_h, throughput)
+    est = estimate(job, best.usd_h, throughput, offer=best)
     est.update(provider=best.provider, gpu=best.gpu, where=best.where, usd_per_h=best.usd_h, ceiling=ceiling,
                cap_usd=job.max_usd, max_hours=job.max_hours)
     ledger.write("estimate", est, job=run_id, refs={"name": job.name, "workload": job.workload})
@@ -106,6 +128,9 @@ def run(job, *, dry_run=False, log_dir=None, gpu_override=None, provider=None, t
     print(f"{job.name}: {best.label} ({best.where}) at ${best.usd_h:.2f}/h; estimate {est['wall_s'] / 60:.0f} min, "
           f"${est['usd']} ({est['basis']}); cap ${job.max_usd}, {job.max_hours} h; "
           f"today so far ${spent_today:.2f} of ${s['daily_cap_usd']}")
+    if est.get("basis") == "placement":
+        print(f"  rental ~${est['rental_usd']:.4f}; advertised bandwidth "
+              + (f"~${est['estimated_bandwidth_usd']:.4f}" if est['bandwidth_fees_known'] else "unknown (total is a lower bound)"))
     if spent_today + min(est["usd"], job.max_usd) > s["daily_cap_usd"]:
         raise SystemExit(f"refusing: today's spend ${spent_today:.2f} + this job would exceed the daily cap ${s['daily_cap_usd']}")
     if dry_run:
@@ -141,12 +166,29 @@ def run(job, *, dry_run=False, log_dir=None, gpu_override=None, provider=None, t
                                            "ports": info.get("ports")}, job=run_id)
                 health = preflight(remote)
                 ledger.write("host.ok", {"pod": made["id"], **health}, job=run_id)
+                from gipper.cuda_probe import check as cuda_check, CudaProbeError
+                try:
+                    cuda_health = cuda_check(remote, job.env)
+                except CudaProbeError as error:
+                    ledger.write("host.cuda_probe", {"provider": prov.name, "pod": made["id"], **error.receipt}, job=run_id)
+                    raise
+                ledger.write("host.cuda_probe", {"provider": prov.name, "pod": made["id"], **cuda_health}, job=run_id)
+                if job.placement is not None and job.placement.probe_transfer_mb:
+                    from gipper.network_probe import probe
+                    network = probe(remote, job.placement)
+                    ledger.write("host.network_probe", {"provider": prov.name, "pod": made["id"],
+                                 "machine": info.get("machine"), **network}, job=run_id)
+                    print(f"network probe from {network['origin_hostname']}: upload {network['upload_mbps']} Mbps, "
+                          f"download {network['download_mbps']} Mbps ({network['status']}; includes SSH overhead)", flush=True)
+                    if network['status'] != 'ok':
+                        raise BadHost(network.get('error', 'network probe failed'))
                 break
             except BadHost as e:
                 print(f"rejecting host {info.get('machine') or made['id']}: {e}")
                 ledger.write("host.reject", {"provider": prov.name, "pod": made["id"], "machine": info.get("machine"),
                                              "why": str(e)}, job=run_id)
-                _terminate(inst, run_id, job)
+                if not _terminate(inst, run_id, job):
+                    raise CleanupPending("prior instance closure unverified; refusing replacement rental")
                 inst, remote = None, None
         else:
             raise RuntimeError("three hosts in a row were busy or broken")
@@ -162,7 +204,7 @@ def run(job, *, dry_run=False, log_dir=None, gpu_override=None, provider=None, t
             remote.put(t.src, f"{jobdir}/{t.dst}", t.exclude)
         # where the outside world reaches the job's ports (e.g. to advertise in ICE candidates)
         env = {"GIPPER_PUBLIC_IP": remote.host, **{f"GIPPER_PORT_{k.replace('/', '_').upper()}": str(v["port"])
-                                                     for k, v in ports.items()}, **job.env}
+                                                     for k, v in ports.items()}, **job.env, **cuda_health["environment_override"]}
         envs = " ".join(f"export {k}={shlex.quote(v)};" for k, v in env.items())
         body = f"source {jobdir}/.gipper/bootstrap.sh; {envs} cd {jobdir}; " + \
                (f"{job.setup} && " if job.setup else "") + f"{job.command}"
@@ -222,31 +264,34 @@ def run(job, *, dry_run=False, log_dir=None, gpu_override=None, provider=None, t
         print(f"\nerror: {e}")
         _salvage(locals().get("remote"), job, locals().get("jobdir"))
     finally:
-        signal.signal(signal.SIGINT, old)
-        if inst:
-            _terminate(inst, run_id, job)
-        ledger.write("run.end", {"outcome": outcome, "units": job.units_count, "units_name": job.units_name},
-                     job=run_id, refs={"name": job.name, "workload": job.workload})
-        log.close()
+        try:
+            signal.signal(signal.SIGINT, old)
+            if inst:
+                try:
+                    if inst.get("termination_pending") or not _terminate(inst, run_id, job):
+                        outcome = "termination_pending"
+                except Exception as cleanup_error:
+                    outcome = "termination_pending"
+                    ledger.write("pod.termination_pending", {"provider": inst["provider"].name, "pod": inst["id"],
+                                 "reason": str(cleanup_error)[:500]}, job=run_id)
+        finally:
+            try:
+                ledger.write("run.end", {"outcome": outcome, "units": job.units_count, "units_name": job.units_name},
+                             job=run_id, refs={"name": job.name, "workload": job.workload})
+            finally:
+                log.close()
     return run_id, outcome
 
 
 def _terminate(inst, run_id, job):
-    prov, iid = inst["provider"], inst["id"]
-    for attempt in range(5):
-        try:
-            prov.terminate(iid)
-            break
-        except ProviderError as e:
-            print(f"terminate failed ({e}); retrying")
-            time.sleep(5)
-    secs = _now() - inst["t"]
-    usd = secs / 3600 * inst["usd_h"]
-    ledger.write("pod.terminate", {"provider": prov.name, "pod": iid}, job=run_id)
-    ledger.write("spend", {"provider": prov.name, "pod": iid, "seconds": round(secs), "usd_per_h": inst["usd_h"],
-                           "usd": round(usd, 4), "basis": "computed", "accuracy": "estimated"},
-                 job=run_id, refs={"name": job.name, "workload": job.workload})
-    print(f"{prov.name} {iid} terminated after {secs / 60:.1f} min: ~${usd:.3f}")
+    from gipper.lifecycle import terminate
+    if inst.get("closure_verified"):
+        return True
+    result = terminate(inst["provider"], inst["id"], job_id=run_id, started=inst["t"], usd_h=inst["usd_h"],
+                       refs={"name": job.name, "workload": job.workload})
+    inst["closure_verified"] = result
+    inst["termination_pending"] = not result
+    return result
 
 
 def _salvage(remote, job, jobdir):

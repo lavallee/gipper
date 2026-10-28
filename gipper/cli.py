@@ -57,9 +57,15 @@ def _pod(args):
         if args.cmd == "estimate":
             offers, ceiling, notes = runmod.plan(job, provider=args.provider)
             for o in offers[:8]:
-                e = runmod.estimate(job, o.usd_h, args.throughput)
+                e = runmod.estimate(job, o.usd_h, args.throughput, offer=o)
                 print(f"{o.provider:10s} {o.gpu[:30]:30s} ${o.usd_h:.2f}/h  ~{e['wall_s'] / 60:.0f} min  ~${e['usd']:.3f}  "
                       f"({e['basis']}; {o.where}; stock {o.stock or '-'})")
+                if e["basis"] == "placement":
+                    fee = f"${e['estimated_bandwidth_usd']:.4f}" if e['bandwidth_fees_known'] else "unknown; total is a lower bound"
+                    print(f"  rental=${e['rental_usd']:.4f}; advertised bandwidth={fee}; total=${e['estimated_total_usd']:.4f}")
+                    print("  seconds: " + ", ".join(f"{key}={e[key]:.1f}" for key in ("setup_s", "setup_download_s", "upload_s", "compute_s", "download_s")))
+                    for assumption in e["assumptions"]:
+                        print(f"  assumption: {assumption}")
             print(f"price ceiling ${ceiling:.2f}/h" + "".join(f"\nnote: {n}" for n in notes))
             return
         _, outcome = runmod.run(job, dry_run=args.dry_run, gpu_override=args.gpu, provider=args.provider,
@@ -79,7 +85,7 @@ def _pod(args):
         from gipper.reap import reap
         acted = reap(dry_run=args.dry_run)
         for prov, pid, name, why in acted:
-            print(f"{'would end' if args.dry_run else 'ended'} {prov} {pid} {name}: {why}")
+            print(f"{'would request cleanup' if args.dry_run else 'cleanup attempted for'} {prov} {pid} {name}: {why}")
         if not acted:
             print("nothing to reap")
         return

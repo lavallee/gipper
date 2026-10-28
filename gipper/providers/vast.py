@@ -31,17 +31,23 @@ def _port_opts(ports):
     return out
 
 
-def offers_from(rows):
+def offers_from(rows, *, per_gpu=PER_GPU, decimal_memory=False):
     out, per = [], {}
     for o in rows:
         name = o.get("gpu_name") or "?"
-        if per.get(name, 0) >= PER_GPU:
+        if per_gpu is not None and per.get(name, 0) >= per_gpu:
             continue
         per[name] = per.get(name, 0) + 1
         geo = o.get("geolocation") or ""
-        out.append(Offer("vast", name, round((o.get("gpu_ram") or 0) / 1024), float(o["dph_total"]), where=geo,
+        out.append(Offer("vast", name, ((o.get("gpu_ram") or 0) * 1024**2 / 1e9 if decimal_memory else round((o.get("gpu_ram") or 0) / 1024)), float(o["dph_total"]), where=geo,
                          country=geo.rsplit(",", 1)[-1].strip().upper() or None, stock="yes", udp=True,
-                         ref={"ask": o["id"], "machine": o.get("machine_id"), "reliability": o.get("reliability")}))
+                         ref={"ask": o["id"], "machine": o.get("machine_id"), "reliability": o.get("reliability")},
+                         metrics={"host_download_mbps": o.get("inet_down"), "host_upload_mbps": o.get("inet_up"),
+                                  "host_download_usd_per_gb": o.get("inet_down_cost"), "host_upload_usd_per_gb": o.get("inet_up_cost"),
+                                  "dlperf": o.get("dlperf"), "cuda_max_good": o.get("cuda_max_good"),
+                                  "compute_capability": (o["compute_cap"] / 100 if o.get("compute_cap", 0) >= 100 else o.get("compute_cap")),
+                                  "reliability": o.get("reliability"), "disk_bw_mbps": o.get("disk_bw"),
+                                  "metrics_basis": "Vast advertised host metrics; client path unmeasured"}))
     return out
 
 
@@ -61,10 +67,20 @@ class Vast(Provider):
              "direct_port_count": {"gte": 1 + len(job.ports)},   # ssh plus the job's own
              "type": "ondemand", "order": [["dph_total", "asc"]], "limit": 200,
              "allocated_storage": job.container_disk_gb}   # so dph_total includes the disk
+        placement = getattr(job, "placement", None)
+        if placement is not None:
+            # Vast's gpu_ram is MiB; explicit profiles use decimal GB consistently.
+            q["gpu_ram"] = {"gte": job.min_mem_gb * 1e9 / 1024**2}
+            for key, value in (("inet_down", placement.min_host_download_mbps),
+                               ("inet_up", placement.min_host_upload_mbps), ("dlperf", placement.min_dlperf),
+                               ("cuda_max_good", placement.min_cuda),
+                               ("compute_cap", placement.min_compute_capability * 100 if placement.min_compute_capability else None)):
+                if value is not None:
+                    q[key] = {"gte": value}
         if job.regions:
             q["geolocation"] = {"in": [r.upper() for r in job.regions]}
         rows = self._req("POST", "/v0/bundles/", q, auth=self.has_key()).get("offers", [])
-        return offers_from(rows)
+        return offers_from(rows, per_gpu=None if placement else PER_GPU, decimal_memory=placement is not None)
 
     def _ensure_key(self, pubkey):
         """Vast adds account keys to new instances; register gipper's once."""

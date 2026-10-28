@@ -48,6 +48,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from gipper.config import settings
+from gipper.placement import Placement, load_placement
 
 
 class JobError(ValueError):
@@ -88,6 +89,7 @@ class Job:
     max_usd: float = 2.0
     max_hours: float = 3.0
     path: Path | None = None
+    placement: Placement | None = None
 
 
 def load(path):
@@ -131,7 +133,8 @@ def load(path):
         inputs=tr(d.get("inputs", []), "src"), outputs=tr(d.get("outputs", []), "dst"),
         checkpoint_src=ck.get("src"), checkpoint_every_s=int(ck.get("every_s", s["checkpoint_every_s"])),
         max_usd=float(budget.get("max_usd", s["default_job_cap_usd"])),
-        max_hours=float(budget.get("max_hours", s["default_max_hours"])), path=path)
+        max_hours=float(budget.get("max_hours", s["default_max_hours"])), path=path,
+        placement=load_placement(d.get("placement"), error=JobError))
     for p in job.ports:
         num, _, proto = p.partition("/")
         if not num.isdigit() or proto.lower() not in ("", "tcp", "udp", "http"):

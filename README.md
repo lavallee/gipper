@@ -57,12 +57,17 @@ advertise, e.g. as an ICE candidate). `[gpu] providers` narrows the markets;
 `prefer` names match across them ("RTX 4090" is Runpod's "NVIDIA GeForce RTX 4090").
 
 What `pod run` guarantees:
-- **The GPU is always given back.** Terminate runs in `finally`, after
-  success, failure, Ctrl-C or a cap. The job runs detached under
-  `timeout max_hours`, so a lost client cannot leave it running past its budget,
-  and `gipper pod reap` (a 15-minute timer) ends any `gipper-` machine on any
-  provider that the ledger says should be gone. Shadeform instances also carry
-  Shadeform's own auto-delete (deadline and spend ceiling).
+- **Cleanup is attempted and verified.** Termination runs in `finally` after
+  success, failure, Ctrl-C or a cap. Accepted DELETE is followed by bounded
+  provider-list checks. Only verified absence emits `pod.closure_verified`,
+  `pod.terminate` and final estimated rental spend. API errors or continued
+  visibility retain `pod.termination_pending`; `run.end` reports that outcome,
+  and the reaper prioritizes the owned ID without waiting for its deadline.
+  No replacement host is rented while prior closure is unverified. A detached
+  job's `timeout` bounds its computation, not the rental bill: unreachable cloud
+  control planes can keep charging until removal is actually confirmed.
+  External guards and reaper sweeps remain necessary. Shadeform also offers
+  provider-side auto-delete deadlines/spend ceilings.
 - **Caps:** per job (`[budget] max_usd`, `max_hours`) and per day
   (`daily_cap_usd` in `~/.config/gipper/config.toml`, default $5); a price
   ceiling (`[gpu] max_usd_per_h`, default 2x the cheapest stocked offer of the
@@ -110,12 +115,15 @@ to shop both). Also check four things:
 written before 2026-10-26; any other `gipper.runpod.run` name now raises an
 error that points here.
 
+For opt-in total-cost/time placement, measured transfer checks and early actual
+CUDA initialization, see [workload placement](docs/workload-placement.md).
+
 ## Ledger
 
 `~/.local/share/gipper/receipts/YYYY-MM.jsonl`, one `gipper.receipt/v1`
 record per line: `estimate`, `pod.create`, `pod.ready`, `host.ok`/`host.reject`,
 `run.start`, `checkpoint`, `collect`, `cap`, `error`, `pod.terminate`, `spend`,
-`run.end`, `reap`. Machine receipts carry `provider` (absent on receipts from
+`run.end`, `reap`, `pod.termination_pending`, `pod.closure_verified`. Machine receipts carry `provider` (absent on receipts from
 before 2026-10-26, which are all Runpod's). Spend is computed from the machine's
 own hourly price and its lifetime.
 

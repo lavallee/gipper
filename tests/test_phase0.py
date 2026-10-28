@@ -216,6 +216,7 @@ class FakeProvider:
 
     def terminate(self, mid):
         self.terminated.append(mid)
+        self.machines = [m for m in self.machines if str(m["id"]) != str(mid)]
 
 
 def test_reaper_ends_only_forgotten_gipper_machines_on_every_provider():

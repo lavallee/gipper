@@ -22,6 +22,8 @@ class Offer:
     stock: str | None = None  # High/Medium/Low, "yes" for a specific machine, None if unknown
     udp: bool = False        # can expose UDP ports
     ref: dict = field(default_factory=dict)  # what the provider needs to rent it
+    metrics: dict = field(default_factory=dict)  # normalized optional metrics; missing stays missing
+    placement_estimate: dict = field(default_factory=dict)  # auditable opt-in ranking explanation
 
     @property
     def label(self):
@@ -64,12 +66,15 @@ def admit(offers, *, min_mem_gb=0, regions=(), ports=()):
     return out
 
 
-def rank(offers, prefer=(), providers=()):
+def rank(offers, prefer=(), providers=(), *, job=None):
     """Preferred GPUs first (in the job's order), then offers with known stock, then
     cheapest; the provider order in settings breaks ties."""
     def pref_rank(o):
         return next((i for i, p in enumerate(prefer) if matches(p, o.gpu)), len(prefer))
     prov = {p: i for i, p in enumerate(providers)}
+    if job is not None and getattr(job, "placement", None) is not None:
+        from gipper.placement import rank_for_job
+        return rank_for_job(offers, job, tie_key=lambda o: (pref_rank(o), o.stock is None, prov.get(o.provider, len(prov))))
     return sorted(offers, key=lambda o: (pref_rank(o), o.stock is None, o.usd_h, prov.get(o.provider, len(prov))))
 
 
@@ -111,4 +116,7 @@ def shop(job, *, names=None, keyed_only=True):
         except (Exception, SystemExit) as e:  # one market's outage (or missing key) must not stop the others
             notes.append(f"{name}: {e}")
     offers = admit(offers, min_mem_gb=job.min_mem_gb, regions=job.regions, ports=job.ports)
-    return rank(offers, job.prefer, names), notes
+    ranked = rank(offers, job.prefer, names, job=job)
+    if getattr(job, "placement", None) is not None:
+        notes.append(f"placement {job.placement.profile}/{job.placement.objective}: {len(ranked)}/{len(offers)} offers pass the explicit profile; estimates are assumptions, not measured workload performance")
+    return ranked, notes
