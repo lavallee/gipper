@@ -191,7 +191,7 @@ evidence base for smarter flow control later, on GPUs and on hosted LLMs.
 ### P2 — Nice to Have
 - Scheduled/recurring workloads on rented GPUs (not planned, but the job spec
   and placement must not preclude it).
-- Additional providers (Vast.ai, Modal for serverless inference).
+- Additional providers (Modal for serverless inference). Vast.ai: done (0.1–0.2).
 - A status page (queue, leases, spend) beyond the CLI.
 
 ## Constraints

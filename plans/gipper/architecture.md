@@ -2,7 +2,7 @@
 
 **Date:** 2026-10-20
 **Mindset:** mvp (clean modules, tests on the paths that touch money and other people's jobs)
-**Scale:** personal (one operator, two owned GPUs, one cloud provider)
+**Scale:** personal (one operator, two owned GPUs, two cloud markets: Runpod and Vast.ai)
 **Status:** Approved (Marc, 2026-10-20)
 
 ---
@@ -364,7 +364,7 @@ paused comes back.
 ## Future Considerations
 
 - Scheduled workloads on rented GPUs (the model already allows it).
-- More providers (Vast.ai, Modal for serverless inference).
+- More providers (Modal for serverless inference). Vast.ai and Shadeform: done in 0.1–0.2, see plans/gipper/providers.md.
 - Projects declaring their own workloads; Somm as the single home of metadata.
 - A status page; carbon- or price-aware windows from external feeds.
 

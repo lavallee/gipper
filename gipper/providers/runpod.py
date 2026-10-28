@@ -8,7 +8,7 @@ for a job that must stay in the US.
 """
 import re
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 
 from gipper.config import settings
 from gipper.http import ProviderError, request
@@ -19,6 +19,8 @@ from gipper.ssh import Remote
 GRAPHQL = "https://api.runpod.io/graphql"
 REST = "https://rest.runpod.io/v1"
 RunpodError = ProviderError
+# What POST /pods accepts for allowedCudaVersions (REST v1 schema, 2026-10)
+CUDA_VERSIONS = ("13.0", "12.9", "12.8", "12.7", "12.6", "12.5", "12.4", "12.3", "12.2", "12.1", "12.0", "11.8")
 
 
 class Api:
@@ -139,7 +141,7 @@ class Runpod(Provider):
             "cloudType": cloud, "computeType": "GPU", "containerDiskInGb": job.container_disk_gb, "volumeInGb": 0,
             # direct ssh (tar streams) needs a public IP: community hosts must offer one; secure always does
             "ports": _tcp_ports(job.ports), **({"supportPublicIp": True} if cloud == "COMMUNITY" else {}),
-            **({"allowedCudaVersions": s["cuda_versions"]} if s["cuda_versions"] else {}),
+            **_cuda(job.placement.min_cuda, s["cuda_versions"]),
             "env": {"PUBLIC_KEY": pubkey, **job.env},
         }
         if job.volume:  # the volume pins the data centre, which already fixes the country
@@ -152,8 +154,12 @@ class Runpod(Provider):
         try:
             pod = api.create_pod(spec)
         except ProviderError as e:
-            if "no instances" in str(e).lower() or "not available" in str(e).lower():
+            msg = str(e).lower()
+            if "no instances" in msg or "not available" in msg:
                 raise Unavailable(str(e)) from None
+            if "http 400" in msg and "gputypeids" in msg:
+                # GraphQL lists types (MIG slices, new SKUs) that POST /pods doesn't accept yet
+                raise Unavailable(f"Runpod won't create {offer.gpu} through its REST API") from None
             raise
         return {"id": pod["id"], "usd_h": pod.get("costPerHr") or offer.usd_h,
                 "gpu": (pod.get("machine") or {}).get("gpuTypeId") or offer.gpu}
@@ -188,9 +194,32 @@ class Runpod(Provider):
                             "status": p.get("desiredStatus"), "usd_h": p.get("costPerHr")})
         return out
 
+    def billed(self, since):
+        """{pod id: (usd, detail)} Runpod billed since `since` (epoch s), per pod per day."""
+        start = datetime.fromtimestamp(since, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        rows = self.api()._req("GET", f"{REST}/billing/pods?bucketSize=day&grouping=podId&startTime={start}")
+        out = {}
+        for r in rows if isinstance(rows, list) else []:
+            usd, detail = out.get(r["podId"], (0.0, {}))
+            detail["billed_s"] = round(detail.get("billed_s", 0) + (r.get("timeBilledMs") or 0) / 1000)
+            detail["disk_gb"] = r.get("diskSpaceBilledGB")
+            out[r["podId"]] = (usd + (r.get("amount") or 0), detail)
+        return out
+
     def account(self):
         a = self.api().account()
         return f"balance ${a['clientBalance']:.2f}; spending ${a['currentSpendPerHr']:.2f}/h now; spend limit {a['spendLimit']}"
 
 
 PROVIDER = Runpod()
+
+
+def _cuda(min_cuda, configured):
+    """allowedCudaVersions: the configured list, or every version Runpod knows at or
+    above the job's min_cuda; nothing (any host) if neither is set."""
+    versions = list(configured or CUDA_VERSIONS)
+    if min_cuda:
+        versions = [v for v in versions if tuple(map(int, v.split("."))) >= tuple(map(int, f"{min_cuda}".split(".")[:2]))]
+    if (configured or min_cuda) and not versions:   # an empty list would mean "any" to Runpod
+        raise Unavailable(f"no Runpod CUDA version satisfies min_cuda {min_cuda}")
+    return {"allowedCudaVersions": versions} if (configured or min_cuda) else {}

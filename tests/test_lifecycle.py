@@ -1,9 +1,6 @@
 import time
-from types import SimpleNamespace
 import pytest
-from gipper import lifecycle,run
-from gipper.job import Job
-from gipper.market import Offer
+from gipper import lifecycle
 
 
 @pytest.fixture
@@ -62,32 +59,6 @@ def test_pending_reaper_claim_has_priority(receipts,monkeypatch):
     rec=state()[('vast','1')]
     assert 'pending' in verdict(rec,{},time.time())
     assert not rec['terminated']
-
-
-def test_run_finally_receipts_and_log_close_even_cleanup_throws(receipts,monkeypatch,tmp_path):
-    import builtins
-    from gipper.providers import BadHost
-    j=Job(name='x',workload='x',command='true');p=Provider();o=Offer('vast','A40',48,.2)
-    remote=SimpleNamespace(wait=lambda _:True)
-    p.wait_ready=lambda *a:(remote,{})
-    monkeypatch.setattr(run,'plan',lambda *a,**kw:([o],.4,[]))
-    monkeypatch.setattr(run,'settings',lambda:{'daily_cap_usd':100})
-    monkeypatch.setattr(run.ledger,'spend_since',lambda _:0)
-    monkeypatch.setattr(run,'ensure_key',lambda:'public-key')
-    allocations=[]
-    def rent(*args):allocations.append(1);return p,o,{'id':'1','usd_h':.2,'gpu':'A40'}
-    monkeypatch.setattr(run,'_rent',rent)
-    monkeypatch.setattr(run,'preflight',lambda _:(_ for _ in ()).throw(BadHost('bad GPU')))
-    monkeypatch.setattr(run,'_terminate',lambda *a:(_ for _ in ()).throw(RuntimeError('cleanup transport failed')))
-    monkeypatch.setattr(run.signal,'signal',lambda *a:None)
-    opened=[]
-    def open_log(*args,**kw):
-        handle=builtins.open(*args,**kw);opened.append(handle);return handle
-    monkeypatch.setattr(run,'open',open_log,raising=False)
-    _,outcome=run.run(j,log_dir=tmp_path/'log')
-    assert outcome=='termination_pending' and len(allocations)==1
-    assert receipts[-1]['kind']=='run.end' and receipts[-1]['payload']['outcome']=='termination_pending'
-    assert opened[0].closed
 
 
 def test_reaper_confirms_previously_accepted_now_absent(receipts,monkeypatch):

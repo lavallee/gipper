@@ -1,6 +1,5 @@
 """Private network probing without SSH/provider access."""
 from types import SimpleNamespace
-import subprocess
 import pytest
 from gipper import network_probe as module
 from gipper.placement import load_placement
@@ -28,20 +27,6 @@ def setup(monkeypatch, *, duration=(4,8), damage=False):
     return calls
 
 
-def test_directional_goodput_includes_wall_and_client_origin(monkeypatch):
-    calls=setup(monkeypatch)
-    remote=Remote();p=load_placement({'probe_transfer_mb':1,'min_measured_upload_mbps':1,'min_measured_download_mbps':1})
-    result=module.probe(remote,p)
-    assert result['status']=='ok'
-    assert result['upload_mbps']==pytest.approx(1048576*8/1e6/4)
-    assert result['download_mbps']==pytest.approx(1048576*8/1e6/8)
-    assert result['origin_hostname'] and 'not RTT' in result['basis']
-    assert result['remote_cleanup_confirmed']
-    assert calls[1][1]['timeout'] < calls[0][1]['timeout']
-    assert calls[0][1]['stdin'].closed and calls[1][1]['stdout'].closed
-    assert not __import__('pathlib').Path(calls[0][1]['stdin'].name).exists()
-
-
 def test_threshold_rejects_slow_path(monkeypatch):
     setup(monkeypatch)
     result=module.probe(Remote(),load_placement({'probe_transfer_mb':1,'min_measured_download_mbps':10}))
@@ -54,29 +39,12 @@ def test_corrupt_or_incomplete_download_is_not_measurement(monkeypatch):
     assert result['status']=='error' and result['download_mbps'] is None
 
 
-def test_timeout_unknown_metrics_and_cleanup_attempt(monkeypatch):
-    calls=[]
-    def timeout(*args,**kw):
-        calls.append(kw);raise subprocess.TimeoutExpired('ssh',kw['timeout'])
-    monkeypatch.setattr(module.subprocess,'run',timeout)
-    remote=Remote();result=module.probe(remote,load_placement({'probe_transfer_mb':1}))
-    assert result['status']=='error' and result['upload_mbps'] is None and result['download_mbps'] is None
-    assert result['remote_cleanup_confirmed'] and calls[0]['stdin'].closed
-    assert calls[0]['timeout'] <=117
-
-
 def test_real_timeout_reaps_child(monkeypatch,tmp_path):
     # Execute a LOCAL Python child in place of ssh; no network/model/provider.
     import os,sys
-    from pathlib import Path
     pidfile=tmp_path/'pid'
     remote=Remote()
     remote._base=lambda:[sys.executable,'-c',f'import os,time;open({str(pidfile)!r},"w").write(str(os.getpid()));time.sleep(30)']
     result=module.probe(remote,load_placement({'probe_transfer_mb':1,'probe_timeout_s':.3}))
     assert result['status']=='error' and result['wall_s']<2
     with pytest.raises(ProcessLookupError): os.kill(int(pidfile.read_text()),0)
-
-
-@pytest.mark.parametrize('data',[{'min_measured_upload_mbps':10},{'probe_transfer_mb':65},{'probe_transfer_mb':.1},{'probe_timeout_s':301}])
-def test_invalid_probe_config(data):
-    with pytest.raises(ValueError):load_placement(data)

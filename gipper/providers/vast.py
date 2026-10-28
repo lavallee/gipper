@@ -17,7 +17,7 @@ from gipper.ssh import Remote
 BASE = "https://console.vast.ai/api"
 MIN_RELIABILITY = 0.97   # Vast's own uptime score for the machine
 MIN_INET_DOWN = 100      # Mb/s: inputs and model weights have to get there
-PER_GPU = 3              # cheapest few machines per GPU model are plenty to choose from
+PER_GPU = 8              # machines per GPU model: enough variety in speed and track record
 DEAD = ("exited", "unknown", "offline")   # never reaches running from these (Vast's docs)
 
 
@@ -31,23 +31,27 @@ def _port_opts(ports):
     return out
 
 
-def offers_from(rows, *, per_gpu=PER_GPU, decimal_memory=False):
+def offers_from(rows, per_gpu=PER_GPU):
+    """Offers from Vast search rows. Memory is decimal GB from Vast's MiB (an A40's
+    46068 MiB is 48.3 GB, a 4090's 24564 MiB is 25.8 GB), so nominal sizes qualify.
+    Speeds are Mb/s and fees $/GB, as Vast advertises them."""
     out, per = [], {}
     for o in rows:
         name = o.get("gpu_name") or "?"
-        if per_gpu is not None and per.get(name, 0) >= per_gpu:
+        if per.get(name, 0) >= per_gpu:
             continue
         per[name] = per.get(name, 0) + 1
         geo = o.get("geolocation") or ""
-        out.append(Offer("vast", name, ((o.get("gpu_ram") or 0) * 1024**2 / 1e9 if decimal_memory else round((o.get("gpu_ram") or 0) / 1024)), float(o["dph_total"]), where=geo,
+        cap = o.get("compute_cap")
+        out.append(Offer("vast", name, (o.get("gpu_ram") or 0) * 1024**2 / 1e9, float(o["dph_total"]), where=geo,
                          country=geo.rsplit(",", 1)[-1].strip().upper() or None, stock="yes", udp=True,
-                         ref={"ask": o["id"], "machine": o.get("machine_id"), "reliability": o.get("reliability")},
+                         ref={"ask": o["id"], "machine": str(o["machine_id"]) if o.get("machine_id") else None},
                          metrics={"host_download_mbps": o.get("inet_down"), "host_upload_mbps": o.get("inet_up"),
-                                  "host_download_usd_per_gb": o.get("inet_down_cost"), "host_upload_usd_per_gb": o.get("inet_up_cost"),
-                                  "dlperf": o.get("dlperf"), "cuda_max_good": o.get("cuda_max_good"),
-                                  "compute_capability": (o["compute_cap"] / 100 if o.get("compute_cap", 0) >= 100 else o.get("compute_cap")),
-                                  "reliability": o.get("reliability"), "disk_bw_mbps": o.get("disk_bw"),
-                                  "metrics_basis": "Vast advertised host metrics; client path unmeasured"}))
+                                  "host_download_usd_per_gb": o.get("inet_down_cost"),
+                                  "host_upload_usd_per_gb": o.get("inet_up_cost"),
+                                  "cuda_max_good": o.get("cuda_max_good"),
+                                  "compute_capability": cap / 100 if cap and cap >= 100 else cap,
+                                  "reliability": o.get("reliability")}))
     return out
 
 
@@ -61,26 +65,21 @@ class Vast(Provider):
         return request(method, f"{BASE}{path}", body, headers=headers, params=params)
 
     def offers(self, job):
+        p = job.placement
         q = {"verified": {"eq": True}, "external": {"eq": False}, "rentable": {"eq": True}, "rented": {"eq": False},
-             "num_gpus": {"eq": 1}, "gpu_ram": {"gte": job.min_mem_gb * 1000},   # MB in the API
-             "reliability": {"gte": MIN_RELIABILITY}, "inet_down": {"gte": MIN_INET_DOWN},
+             "num_gpus": {"eq": 1}, "gpu_ram": {"gte": job.min_mem_gb * 1e9 / 1024**2},   # MiB in the API
+             "reliability": {"gte": MIN_RELIABILITY},
+             "inet_down": {"gte": max(MIN_INET_DOWN, p.min_host_download_mbps or 0)},
              "direct_port_count": {"gte": 1 + len(job.ports)},   # ssh plus the job's own
              "type": "ondemand", "order": [["dph_total", "asc"]], "limit": 200,
              "allocated_storage": job.container_disk_gb}   # so dph_total includes the disk
-        placement = getattr(job, "placement", None)
-        if placement is not None:
-            # Vast's gpu_ram is MiB; explicit profiles use decimal GB consistently.
-            q["gpu_ram"] = {"gte": job.min_mem_gb * 1e9 / 1024**2}
-            for key, value in (("inet_down", placement.min_host_download_mbps),
-                               ("inet_up", placement.min_host_upload_mbps), ("dlperf", placement.min_dlperf),
-                               ("cuda_max_good", placement.min_cuda),
-                               ("compute_cap", placement.min_compute_capability * 100 if placement.min_compute_capability else None)):
-                if value is not None:
-                    q[key] = {"gte": value}
+        for key, floor in (("inet_up", p.min_host_upload_mbps), ("cuda_max_good", p.min_cuda),
+                           ("compute_cap", p.min_compute_capability * 100 if p.min_compute_capability else None)):
+            if floor:
+                q[key] = {"gte": floor}
         if job.regions:
             q["geolocation"] = {"in": [r.upper() for r in job.regions]}
-        rows = self._req("POST", "/v0/bundles/", q, auth=self.has_key()).get("offers", [])
-        return offers_from(rows, per_gpu=None if placement else PER_GPU, decimal_memory=placement is not None)
+        return offers_from(self._req("POST", "/v0/bundles/", q, auth=self.has_key()).get("offers", []))
 
     def _ensure_key(self, pubkey):
         """Vast adds account keys to new instances; register gipper's once."""
@@ -139,6 +138,24 @@ class Vast(Provider):
                 if (i.get("label") or "").startswith("gipper-"):
                     out.append({"id": str(i["id"]), "name": i["label"], "started": i.get("start_date"),
                                 "status": i.get("actual_status"), "usd_h": i.get("dph_total")})
+            if not d.get("next_token"):
+                return out
+            params["after_token"] = d["next_token"]
+
+    def billed(self, since):
+        """{instance id: (usd, detail)} Vast charged since `since` (epoch s), from its
+        itemised charges: GPU while running, disk from creation, bandwidth by the byte."""
+        out, params = {}, {"select_filters": {"day": {"gte": int(since), "lte": int(time.time())}}, "limit": 20}
+        while True:
+            d = self._req("GET", "/v0/charges/", params=params)
+            for r in d.get("results") or []:
+                if r.get("type") != "instance" or not str(r.get("source", "")).startswith("instance-"):
+                    continue
+                iid = r["source"].split("-", 1)[1]
+                usd, detail = out.get(iid, (0.0, {}))
+                for item in r.get("items") or []:
+                    detail[item["type"]] = round(detail.get(item["type"], 0) + item.get("amount", 0), 6)
+                out[iid] = (usd + r.get("amount", 0), detail)
             if not d.get("next_token"):
                 return out
             params["after_token"] = d["next_token"]

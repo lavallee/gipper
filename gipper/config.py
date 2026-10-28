@@ -28,6 +28,13 @@ DEFAULTS = {
     "cloud": "COMMUNITY",           # COMMUNITY or SECURE
     "container_disk_gb": 40,
     "checkpoint_every_s": 300,
+    # How offers are weighed (see docs/placement.md). An hour of waiting is worth
+    # this much; a failed host (time lost, attention, a re-run) costs this much on
+    # top of the rental it wasted. Short jobs end up chosen for reliability and
+    # speed, long ones for price.
+    "hour_value_usd": 3.0,
+    "failure_cost_usd": 1.0,
+    "history_days": 90,             # how far back the ledger counts as memory
 }
 
 

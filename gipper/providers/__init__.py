@@ -8,6 +8,8 @@
     terminate(id)
     list_ours()                      -> [{"id", "name", "started"}] for names gipper-*
     account()                        -> one line on balance and spend
+    billed(since)                    -> {id: (usd, detail)} actually charged, or None if
+                                        the provider can't say
 
 Everything else (caps, upload, the detached run, checkpoints, teardown, receipts)
 is the same for every provider and lives in gipper.run.
@@ -37,6 +39,9 @@ class Provider:
 
     def key(self):
         return secret(self.key_name)
+
+    def billed(self, since):
+        return None
 
 
 def load(name):

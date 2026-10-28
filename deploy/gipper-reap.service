@@ -1,6 +1,8 @@
 [Unit]
-Description=gipper: end rented GPUs gipper started and forgot (only pods named gipper-*)
+Description=gipper: end rented GPUs gipper forgot (only machines named gipper-*), then record providers' bills
 
 [Service]
 Type=oneshot
 ExecStart=%h/.local/bin/gipper pod reap
+# bills are bookkeeping: a provider's billing API being down must not mark the sweep failed
+ExecStart=-%h/.local/bin/gipper pod reconcile --days 3

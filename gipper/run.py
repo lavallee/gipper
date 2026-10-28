@@ -2,9 +2,11 @@
 the job, bring the results home, and always give the GPU back.
 
 Lifecycle (every step receipted):
-  shop (every provider with a key; regions, ports, memory) -> estimate -> caps
+  shop (every provider with a key; regions, ports, memory, [placement] floors)
+  -> rank by whole-run score (gipper.costs, using gipper.history) -> caps
   -> rent the best offer (next one if it's gone) -> wait for ssh -> preflight the GPU
-  (replace a busy or broken host, up to 3) -> upload inputs
+  and CUDA, optionally probe the network (replace a bad host, up to 3)
+  -> upload inputs (timed: memory learns real transfer speeds)
   -> start the job detached (nohup, under `timeout max_hours`)
   -> stream its log, sync checkpoints, enforce max_usd / max_hours
   -> download outputs -> terminate (in `finally`, whatever happened) -> spend
@@ -21,6 +23,7 @@ from pathlib import Path
 
 from gipper import ledger, market
 from gipper.config import DATA, settings
+from gipper.placement import input_gb
 from gipper.http import ProviderError
 from gipper.providers import BadHost, Unavailable, load
 from gipper.ssh import ensure_key
@@ -32,6 +35,12 @@ class CleanupPending(RuntimeError):
     pass
 
 
+class Unsuitable(BadHost):
+    """The host works but doesn't suit this job (compute capability, a runtime the
+    job pins). Rejected and replaced like any bad host, but not held against it in
+    memory. Client preflight wrappers should raise this for job-specific checks."""
+
+
 class Capped(Exception):
     pass
 
@@ -40,47 +49,42 @@ def _now():
     return time.time()
 
 
-def plan(job, *, provider=None, gpu=None):
-    """Offers worth trying, best first, all at or under the price ceiling."""
-    offers, notes = market.shop(job, names=[provider] if provider else None)
+def plan(job, *, provider=None, gpu=None, throughput=None):
+    """(offers worth trying best first, hourly ceiling, notes). Offers above the job's
+    own max_usd_per_h, or whose expected cost exceeds its budget, are left out."""
+    offers, notes = market.shop(job, names=[provider] if provider else None, throughput=throughput)
     if gpu:
         offers = [o for o in offers if market.matches(gpu, o.gpu)]
+    if job.max_usd_per_h:
+        offers = [o for o in offers if o.usd_h <= job.max_usd_per_h]
+    over = [o for o in offers if o.estimate.get("usd", 0) > job.max_usd]
+    if over and len(over) < len(offers):
+        notes.append(f"{len(over)} offer(s) left out: expected cost above the job's ${job.max_usd} budget")
+        offers = [o for o in offers if o not in over]
     if not offers:
         where = f" in {', '.join(job.regions)}" if job.regions else ""
         udp = " with UDP" if market.wants_udp(job.ports) else ""
-        raise SystemExit(f"no GPU{' ' + gpu if gpu else ''} with >= {job.min_mem_gb} GB{where}{udp} is on offer right now"
+        cap = f" at <= ${job.max_usd_per_h}/h" if job.max_usd_per_h else ""
+        raise SystemExit(f"no GPU{' ' + gpu if gpu else ''} with >= {job.min_mem_gb} GB{where}{udp}{cap} is on offer right now"
                          + "".join(f"\n  {n}" for n in notes))
-    ceiling = market.ceiling(offers, job.max_usd_per_h, job.prefer)
-    if getattr(job, "placement", None) is not None:
-        # The hourly default must not discard the workload-cost winner.
-        if job.max_usd_per_h is None:
-            ceiling = max(ceiling, offers[0].usd_h)
-        eligible = [o for o in offers if o.usd_h <= ceiling]
-        if not eligible:
-            raise SystemExit("no placement-qualified offer fits the explicit hourly ceiling")
-        return eligible, ceiling, notes
-    return [o for o in offers if o.usd_h <= ceiling] or offers[:1], ceiling, notes
+    return offers, job.max_usd_per_h or max(o.usd_h for o in offers), notes
 
 
-def estimate(job, gpu_price, throughput=None, setup_s=420, *, offer=None):
-    """Wall seconds and dollars; throughput = units per second if known."""
-    if getattr(job, "placement", None) is not None and offer is not None:
-        from gipper.placement import estimate_offer
-        result = estimate_offer(job, offer)
-        if throughput and job.units_count:
-            result["wall_s"] += job.units_count / throughput - result["compute_s"]
-            result["compute_s"] = job.units_count / throughput
-            result["rental_usd"] = round(result["wall_s"] * gpu_price / 3600, 6)
-            result["usd"] = result["estimated_total_usd"] = round(result["rental_usd"] + result["known_bandwidth_usd"], 6)
-            result["assumptions"].append("estimate compute overridden by explicit units/throughput; offer ranking used profile compute")
-        return {**result, "basis": "placement", "offer_metrics": offer.metrics, "offer_ref": offer.ref}
-    if throughput and job.units_count:
-        wall = setup_s + job.units_count / throughput
-        basis = "throughput"
-    else:
-        wall = min(job.max_hours * 3600, setup_s + 1800)
-        basis = "guess"
-    return {"wall_s": round(wall), "usd": round(wall / 3600 * gpu_price, 3), "basis": basis}
+def estimate(job, gpu_price=None, throughput=None, setup_s=420, *, offer=None):
+    """The whole-run estimate for an offer (gipper.costs); without one, 0.1's rough
+    guess from the hourly price."""
+    if offer is not None:
+        if not offer.estimate or throughput:
+            from gipper.costs import estimate as whole_run
+            from gipper.history import History
+            offer.estimate = whole_run(job, offer, History.load(), throughput=throughput)
+        return {**offer.estimate, "basis_summary": _basis(offer.estimate)}
+    wall = (setup_s + job.units_count / throughput) if throughput and job.units_count else min(job.max_hours * 3600, setup_s + 1800)
+    return {"wall_s": round(wall), "usd": round(wall / 3600 * gpu_price, 3), "basis": "guess", "basis_summary": "guess"}
+
+
+def _basis(e):
+    return ", ".join(f"{k} {v}" for k, v in e.get("basis", {}).items() if v not in ("default", "rate"))  or "defaults"
 
 
 def _rent(queue, job, pubkey, name):
@@ -111,31 +115,53 @@ def preflight(remote):
     return {"util": int(util), "mem_mib": int(mem), "mode": mode}
 
 
+def requirements(remote, job):
+    """The job's [placement] floors, checked on the machine itself (a provider may
+    not advertise them, or advertise them wrong)."""
+    want = job.placement.min_compute_capability
+    if not want:
+        return {}
+    r = remote.run("nvidia-smi --query-gpu=compute_cap --format=csv,noheader", check=False, timeout=60)
+    try:
+        have = float(r.stdout.strip().splitlines()[0])
+    except (ValueError, IndexError):
+        raise BadHost(f"could not read the GPU's compute capability: {r.stderr.strip()[-200:]}") from None
+    if have < want:
+        raise Unsuitable(f"GPU compute capability {have} is below the job's {want}")
+    return {"compute_capability": have}
+
+
+def _bytes(path):
+    p = Path(path)
+    if p.is_file():
+        return p.stat().st_size
+    return sum(f.stat().st_size for f in p.rglob("*") if f.is_file() and not f.is_symlink()) if p.exists() else 0
+
+
 def run(job, *, dry_run=False, log_dir=None, gpu_override=None, provider=None, throughput=None):
     s = settings()
     run_id = ledger.new_id("job")
     if job.sensitivity == "owned-only":
         raise SystemExit(f"{job.name}: sensitivity = owned-only; not running on a rented GPU")
-    offers, ceiling, notes = plan(job, provider=provider, gpu=gpu_override)
+    offers, ceiling, notes = plan(job, provider=provider, gpu=gpu_override, throughput=throughput)
     for n in notes:
         print(f"note: {n}")
     best = offers[0]
     est = estimate(job, best.usd_h, throughput, offer=best)
     est.update(provider=best.provider, gpu=best.gpu, where=best.where, usd_per_h=best.usd_h, ceiling=ceiling,
-               cap_usd=job.max_usd, max_hours=job.max_hours)
+               machine=best.ref.get("machine"), cap_usd=job.max_usd, max_hours=job.max_hours)
     ledger.write("estimate", est, job=run_id, refs={"name": job.name, "workload": job.workload})
     spent_today = ledger.spend_since(ledger.today_start())
-    print(f"{job.name}: {best.label} ({best.where}) at ${best.usd_h:.2f}/h; estimate {est['wall_s'] / 60:.0f} min, "
-          f"${est['usd']} ({est['basis']}); cap ${job.max_usd}, {job.max_hours} h; "
+    print(f"{job.name}: {best.label} ({best.where}) at ${best.usd_h:.2f}/h; ~{est['wall_s'] / 60:.0f} min, ~${est['usd']:.3f}, "
+          f"{est.get('p_fail', 0):.0%} host risk ({est.get('basis_summary') or est.get('basis', '')}); cap ${job.max_usd}, {job.max_hours} h; "
           f"today so far ${spent_today:.2f} of ${s['daily_cap_usd']}")
-    if est.get("basis") == "placement":
-        print(f"  rental ~${est['rental_usd']:.4f}; advertised bandwidth "
-              + (f"~${est['estimated_bandwidth_usd']:.4f}" if est['bandwidth_fees_known'] else "unknown (total is a lower bound)"))
     if spent_today + min(est["usd"], job.max_usd) > s["daily_cap_usd"]:
         raise SystemExit(f"refusing: today's spend ${spent_today:.2f} + this job would exceed the daily cap ${s['daily_cap_usd']}")
     if dry_run:
         for o in offers[1:6]:
-            print(f"  then {o.label} ({o.where}) ${o.usd_h:.2f}/h")
+            e = o.estimate
+            print(f"  then {o.label} ({o.where}) ${o.usd_h:.2f}/h; ~{e.get('wall_s', 0) / 60:.0f} min, "
+                  f"~${e.get('usd', 0):.3f}, {e.get('p_fail', 0):.0%} risk")
         return run_id, None
 
     log_dir = Path(log_dir or DATA / "jobs" / run_id)
@@ -153,7 +179,8 @@ def run(job, *, dry_run=False, log_dir=None, gpu_override=None, provider=None, t
             prov, offer, made = _rent(queue, job, pubkey, name)
             inst = {"provider": prov, "id": made["id"], "t": _now(), "usd_h": made["usd_h"] or offer.usd_h}
             ledger.write("pod.create", {"provider": prov.name, "pod": made["id"], "gpu": made["gpu"], "where": offer.where,
-                                        "usd_per_h": inst["usd_h"], "deadline": inst["t"] + job.max_hours * 3600 + 600},
+                                        "machine": offer.ref.get("machine"), "usd_per_h": inst["usd_h"],
+                                        "deadline": inst["t"] + job.max_hours * 3600 + 600},
                          job=run_id, refs={"name": job.name})
             print(f"{prov.name} {made['id']} created: {made['gpu']}, {offer.where}, ${inst['usd_h']:.3f}/h; waiting for ssh")
             remote, info = None, {}
@@ -173,7 +200,10 @@ def run(job, *, dry_run=False, log_dir=None, gpu_override=None, provider=None, t
                     ledger.write("host.cuda_probe", {"provider": prov.name, "pod": made["id"], **error.receipt}, job=run_id)
                     raise
                 ledger.write("host.cuda_probe", {"provider": prov.name, "pod": made["id"], **cuda_health}, job=run_id)
-                if job.placement is not None and job.placement.probe_transfer_mb:
+                met = requirements(remote, job)
+                if met:
+                    ledger.write("host.requirements", {"provider": prov.name, "pod": made["id"], **met}, job=run_id)
+                if job.placement.probe_transfer_mb:
                     from gipper.network_probe import probe
                     network = probe(remote, job.placement)
                     ledger.write("host.network_probe", {"provider": prov.name, "pod": made["id"],
@@ -186,7 +216,8 @@ def run(job, *, dry_run=False, log_dir=None, gpu_override=None, provider=None, t
             except BadHost as e:
                 print(f"rejecting host {info.get('machine') or made['id']}: {e}")
                 ledger.write("host.reject", {"provider": prov.name, "pod": made["id"], "machine": info.get("machine"),
-                                             "why": str(e)}, job=run_id)
+                                             "why": str(e), "kind": "unsuitable" if isinstance(e, Unsuitable) else None},
+                             job=run_id)
                 if not _terminate(inst, run_id, job):
                     raise CleanupPending("prior instance closure unverified; refusing replacement rental")
                 inst, remote = None, None
@@ -200,8 +231,10 @@ def run(job, *, dry_run=False, log_dir=None, gpu_override=None, provider=None, t
 
         remote.run(f"mkdir -p {jobdir}")
         remote.put(BOOTSTRAP, f"{jobdir}/.gipper/bootstrap.sh")
+        t_up, up_bytes = _now(), round(input_gb(job) * 1e9)
         for t in job.inputs:
             remote.put(t.src, f"{jobdir}/{t.dst}", t.exclude)
+        _transfer(run_id, prov.name, inst["id"], info, "up", up_bytes, _now() - t_up)
         # where the outside world reaches the job's ports (e.g. to advertise in ICE candidates)
         env = {"GIPPER_PUBLIC_IP": remote.host, **{f"GIPPER_PORT_{k.replace('/', '_').upper()}": str(v["port"])
                                                      for k, v in ports.items()}, **job.env, **cuda_health["environment_override"]}
@@ -216,6 +249,7 @@ def run(job, *, dry_run=False, log_dir=None, gpu_override=None, provider=None, t
         remote.run(f"cd {jobdir}; setsid nohup bash -c {shlex.quote(job_cmd)} > {jobdir}/.gipper/run.log 2>&1 < /dev/null &",
                    timeout=60)
         ledger.write("run.start", {"provider": prov.name, "pod": inst["id"]}, job=run_id)
+        t_run = _now()
         print("running; log follows\n" + "-" * 60, flush=True)
 
         offset, last_ck, code = 0, _now(), None
@@ -244,9 +278,14 @@ def run(job, *, dry_run=False, log_dir=None, gpu_override=None, provider=None, t
                 ledger.write("checkpoint", {"src": job.checkpoint_src}, job=run_id)
                 last_ck = _now()
             time.sleep(10)
+        compute_s = round(_now() - t_run)
         print("-" * 60 + f"\nexit {code}; collecting outputs")
+        t_down, before = _now(), sum(_bytes(t.dst) for t in job.outputs)
         for t in job.outputs:
             remote.get(f"{jobdir}/{t.src}", t.dst)
+        if not job.checkpoint_src:   # with checkpoints, the final pull re-sends files already counted
+            _transfer(run_id, prov.name, inst["id"], info, "down", sum(_bytes(t.dst) for t in job.outputs) - before,
+                      _now() - t_down)
         remote.get(f"{jobdir}/.gipper/run.log", str(log_dir / "pod"))
         ledger.write("collect", {"outputs": [t.dst for t in job.outputs]}, job=run_id)
         outcome = "succeeded" if code == 0 else ("timeout" if code == 124 else "failed")
@@ -276,11 +315,20 @@ def run(job, *, dry_run=False, log_dir=None, gpu_override=None, provider=None, t
                                  "reason": str(cleanup_error)[:500]}, job=run_id)
         finally:
             try:
-                ledger.write("run.end", {"outcome": outcome, "units": job.units_count, "units_name": job.units_name},
+                ledger.write("run.end", {"outcome": outcome, "units": job.units_count, "units_name": job.units_name,
+                                         "compute_s": locals().get("compute_s")},
                              job=run_id, refs={"name": job.name, "workload": job.workload})
             finally:
                 log.close()
     return run_id, outcome
+
+
+def _transfer(run_id, provider, pod, info, direction, nbytes, seconds):
+    """Timed real transfer: what gipper.history learns link speeds from."""
+    if nbytes > 0 and seconds > 0:
+        ledger.write("transfer", {"provider": provider, "pod": pod, "machine": info.get("machine"),
+                                  "direction": direction, "bytes": nbytes, "seconds": round(seconds, 2),
+                                  "mbps": round(nbytes * 8 / 1e6 / seconds, 1)}, job=run_id)
 
 
 def _terminate(inst, run_id, job):

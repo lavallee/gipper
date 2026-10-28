@@ -42,6 +42,10 @@ Vast and Shadeform now; local and toronto in phase 2).
     [budget]
     max_usd = 1.0
     max_hours = 2.0
+
+    [placement]                            # optional: how to judge offers on the whole run
+    compute_s = 900                        # (all fields in gipper/placement.py)
+    setup_download_gb = 5
 """
 import tomllib
 from dataclasses import dataclass, field
@@ -89,7 +93,7 @@ class Job:
     max_usd: float = 2.0
     max_hours: float = 3.0
     path: Path | None = None
-    placement: Placement | None = None
+    placement: Placement = field(default_factory=Placement)
 
 
 def load(path):

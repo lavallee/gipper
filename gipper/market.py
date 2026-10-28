@@ -1,5 +1,6 @@
 """Shopping across providers: every market answers with the same Offer, and one
-ranking decides (the job's GPU preference, then known stock, then price).
+ranking decides: the job's GPU preference first, then the whole-run score from
+gipper.costs (expected dollars, the chance of a bad host, time), then known stock.
 
 GPU names differ by provider ("NVIDIA GeForce RTX 4090", "RTX 4090", "RTX4090"),
 so preferences match on a normalised name. Regions are ISO country codes ("US",
@@ -22,8 +23,8 @@ class Offer:
     stock: str | None = None  # High/Medium/Low, "yes" for a specific machine, None if unknown
     udp: bool = False        # can expose UDP ports
     ref: dict = field(default_factory=dict)  # what the provider needs to rent it
-    metrics: dict = field(default_factory=dict)  # normalized optional metrics; missing stays missing
-    placement_estimate: dict = field(default_factory=dict)  # auditable opt-in ranking explanation
+    metrics: dict = field(default_factory=dict)   # what the provider advertises (speeds, fees, CUDA); missing stays missing
+    estimate: dict = field(default_factory=dict)  # gipper.costs.estimate for the job being shopped
 
     @property
     def label(self):
@@ -51,9 +52,14 @@ def wants_udp(ports):
     return any(p.lower().endswith("/udp") for p in ports)
 
 
-def admit(offers, *, min_mem_gb=0, regions=(), ports=()):
-    """Drop what can't serve the job: too little memory, outside its regions, no UDP."""
+def admit(offers, *, min_mem_gb=0, regions=(), ports=(), placement=None):
+    """Drop what can't serve the job: too little memory, outside its regions, no UDP,
+    or below a [placement] floor the provider advertises. A floor on a figure the
+    provider doesn't advertise passes here and is checked on the machine itself."""
     regions = {r.upper() for r in regions}
+    floors = [] if placement is None else [
+        ("host_download_mbps", placement.min_host_download_mbps), ("host_upload_mbps", placement.min_host_upload_mbps),
+        ("cuda_max_good", placement.min_cuda), ("compute_capability", placement.min_compute_capability)]
     out = []
     for o in offers:
         if o.mem_gb < min_mem_gb:
@@ -62,27 +68,32 @@ def admit(offers, *, min_mem_gb=0, regions=(), ports=()):
             continue
         if wants_udp(ports) and not o.udp:
             continue
+        if any(floor is not None and o.metrics.get(k) is not None and o.metrics[k] < floor for k, floor in floors):
+            continue
         out.append(o)
     return out
 
 
-def rank(offers, prefer=(), providers=(), *, job=None):
-    """Preferred GPUs first (in the job's order), then offers with known stock, then
-    cheapest; the provider order in settings breaks ties."""
+def rank(offers, prefer=(), providers=(), *, job=None, history=None, throughput=None):
+    """Preferred GPUs first (in the job's order), then offers known to be in stock
+    (Runpod's types without stock mostly fail to rent), then the lowest whole-run
+    score (needs the job), then the provider order in settings."""
     def pref_rank(o):
         return next((i for i, p in enumerate(prefer) if matches(p, o.gpu)), len(prefer))
     prov = {p: i for i, p in enumerate(providers)}
-    if job is not None and getattr(job, "placement", None) is not None:
-        from gipper.placement import rank_for_job
-        return rank_for_job(offers, job, tie_key=lambda o: (pref_rank(o), o.stock is None, prov.get(o.provider, len(prov))))
-    return sorted(offers, key=lambda o: (pref_rank(o), o.stock is None, o.usd_h, prov.get(o.provider, len(prov))))
+    if job is not None:
+        from gipper.costs import estimate
+        from gipper.history import History
+        history = history or History.load()
+        for o in offers:
+            o.estimate = estimate(job, o, history, throughput=throughput)
+    return sorted(offers, key=lambda o: (pref_rank(o), o.stock is None, o.estimate.get("score", o.usd_h),
+                                         prov.get(o.provider, len(prov))))
 
 
 def ceiling(offers, job_max=None, prefer=()):
-    """Don't let a busy cheap type silently become one several times the price (the
-    smoke test got a $0.69 5090 for a $0.34 4090 ask): the job's own ceiling, else 2x
-    the cheapest offer with stock among the GPUs the job prefers (among all, if it
-    prefers none), so a market's cheap long tail doesn't price out the card asked for."""
+    """0.1's hourly ceiling (2x the cheapest stocked preferred offer); kept for callers
+    that print it. Ranking no longer needs it: the score already prices the run."""
     if job_max:
         return job_max
     pool = [o for o in offers if any(matches(p, o.gpu) for p in prefer)] or offers
@@ -90,7 +101,7 @@ def ceiling(offers, job_max=None, prefer=()):
     return 2 * min(stocked) if stocked else 0
 
 
-def shop(job, *, names=None, keyed_only=True):
+def shop(job, *, names=None, keyed_only=True, history=None, throughput=None):
     """Offers that can serve the job from every usable provider, ranked, plus notes on
     providers that were skipped or failed (one market being down never stops another)."""
     from gipper.providers import load
@@ -115,8 +126,5 @@ def shop(job, *, names=None, keyed_only=True):
             offers += p.offers(job)
         except (Exception, SystemExit) as e:  # one market's outage (or missing key) must not stop the others
             notes.append(f"{name}: {e}")
-    offers = admit(offers, min_mem_gb=job.min_mem_gb, regions=job.regions, ports=job.ports)
-    ranked = rank(offers, job.prefer, names, job=job)
-    if getattr(job, "placement", None) is not None:
-        notes.append(f"placement {job.placement.profile}/{job.placement.objective}: {len(ranked)}/{len(offers)} offers pass the explicit profile; estimates are assumptions, not measured workload performance")
-    return ranked, notes
+    offers = admit(offers, min_mem_gb=job.min_mem_gb, regions=job.regions, ports=job.ports, placement=job.placement)
+    return rank(offers, job.prefer, names, job=job, history=history, throughput=throughput), notes

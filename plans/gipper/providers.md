@@ -1,8 +1,10 @@
 # gipper: more than one GPU market
 
-**Status:** built 2026-10-26: Runpod region filter, Vast and Shadeform providers
-(see "Built" at the end). Vast was verified with real rentals on 2026-10-27:
-smoke and UDP echo. Shadeform has not rented a machine yet (no key).
+**Status:** decided and built. Runpod and Vast are in use (0.2, 2026-10-28);
+Shadeform is wired in but deferred (no key) by decision on 2026-10-28. How offers
+are chosen now lives in [docs/placement.md](../../docs/placement.md), and what
+the rentals taught in [docs/lessons.md](../../docs/lessons.md). This page keeps
+the reasoning behind choosing these markets.
 
 ## Problem
 
@@ -60,56 +62,22 @@ Keep two wallets, and add a third only on demand:
 Skip Prime Intellect (overlaps with Shadeform) and TensorDock (unclear docs)
 unless one of the first three disappoints.
 
-## Built (2026-10-26)
+## Outcome
 
-- `gipper/providers/{runpod,vast,shadeform}.py` behind one interface
-  (`offers`, `create`, `wait_ready`, `terminate`, `list_ours`, `account`);
-  `gipper/market.py` ranks every market's offers together; `gipper/run.py` and
-  `gipper/reap.py` no longer know which provider they are talking to.
-- Job: `[gpu] regions` (ISO country codes), `[gpu] providers`, `[pod] ports`
-  (`"5004/udp"`). UDP ports skip Runpod; the job gets `GIPPER_PUBLIC_IP` and
-  `GIPPER_PORT_<n>_<PROTO>`.
-- Runpod: stock is asked per country (`lowestPrice(countryCode:, secureCloud:)`)
-  and pods are created with `countryCodes`. Checked live: the only 4090 in stock
-  was in EUR-IS-2, and a US filter drops it.
-- Price ceiling: 2x the cheapest stocked offer of the *preferred* GPUs. Vast's
-  long tail ($0.13 3080s) would otherwise price out a $0.43 4090.
-- Checked live without keys: Vast's `POST /api/v0/bundles/` and Shadeform's
-  `GET /v1/instances/types` are public, so `gipper pod gpus` lists both.
+- **Built in 0.1** (2026-10-26): providers behind one interface, regions, UDP
+  ports, per-country Runpod stock.
+- **Vast verified with real rentals** (2026-10-27): root ssh on the mapped port,
+  bootstrap on `vastai/base-image`, UDP echo, preflight replacing a busy host.
+- **0.2** (2026-10-28): offers judged on the whole run with memory of host
+  reliability and billing. The 0.1 hourly ceiling described above is gone.
+- **Shadeform, if it's ever needed:** run `examples/smoke.toml` and
+  `examples/udp-echo.toml` with `--provider shadeform`, and watch four things:
+  - the `shadeform` user's home;
+  - whether `auto_delete` is accepted as sent;
+  - whether UDP gets through the underlying cloud's firewall;
+  - boot time against the 20-minute wait.
 
-### Still to verify with real rentals
-
-1. **Vast: done 2026-10-27.** Smoke on a US 4090 and UDP echo on a CA 3060
-   both passed: root ssh on the mapped port, and `vastai/base-image` ran the
-   bootstrap. Preflight replaced a busy host. Still open: the gap between
-   computed and billed spend (about $0.016 computed, $0.04 billed), and which
-   error text means "offer gone" (no offer was taken during these runs).
-   The original checklist was: `examples/smoke.toml --provider vast`, then `examples/udp-echo.toml`.
-   Points to watch:
-   - ssh comes up as root on the mapped port;
-   - `vastai/base-image` has `curl` and `python3` for the bootstrap;
-   - the ssh-key list response shape in `_ensure_key`;
-   - which error text means "offer gone".
-2. **Shadeform:** the same two jobs with `--provider shadeform`. Points to watch:
-   - the `shadeform` user's home and `/home/shadeform/job`;
-   - whether `auto_delete` is accepted as sent;
-   - whether UDP gets through the underlying cloud's own firewall (try Massed
-     Compute and Lambda);
-   - the boot time against the 20-minute wait.
-3. Then fold what was learned into the README's lessons, as with Runpod.
-
-## What it takes in gipper (as planned; see Built)
-
-Most of `gipper/runpod/run.py` is not specific to Runpod: caps, upload, the
-detached run, checkpoints, collect, terminate in `finally`, receipts. A provider
-needs to supply:
-
-- `offers(min_mem_gb, regions, needs) -> [Offer(provider, gpu, usd_h, region, stock, ref)]`
-- `create(offer, image, pubkey, ports) -> id`, `get(id) -> ssh (host, port) + port map`, `terminate(id)`
-- `list_ours()` so the reaper covers every provider
-
-On the job side: `[gpu] regions = ["US"]` and `needs = ["udp"]`. `needs`
-filters out Runpod and requests the UDP ports. Then `gipper pod gpus` and
-`estimate` rank one merged list across providers, ordered by preference and
-price. This is the executor seam the phase-2 plan (gipper-c2x) already expects.
-Receipts gain a `provider` field.
+  Shadeform has no billing API, so its spend stays computed.
+- **Still unknown on Vast:** which error text means "offer gone" (no offer has
+  been taken from under gipper yet). gipper treats any create failure that looks
+  like unavailability as "try the next offer".

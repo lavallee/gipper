@@ -1,165 +1,170 @@
 # gipper
 
-GPU work for the Lyra Forge estate. Workloads **ask** for GPU time instead of
-claiming it; the most important request wins; owned machines (lisbon's RTX 3060,
-toronto's M6) and rented GPUs (Runpod) are both placements; and every second and
-dollar lands on a ledger Somm and Milton can read.
+GPU work for the Lyra Forge estate. You describe a job in one TOML file, and gipper
+rents the GPU that will get it done best, runs it, brings the results home, gives
+the GPU back, and puts every second and dollar on a ledger. It shops two markets
+today, Runpod and Vast.ai (Shadeform is wired in but unused), and it learns from
+its own rentals: which providers and machines turn out bad, how fast transfers
+really go, how long a workload takes, and what providers actually bill.
 
-Design: [orientation](plans/gipper/orientation.md) ·
-[architecture](plans/gipper/architecture.md) ·
-[plan](plans/gipper/itemized-plan.md).
-
-**Status:** phase 0 (rented GPUs from the CLI, no daemon) across three markets:
-Runpod, Vast.ai and Shadeform. Requests, leases and pre-emption on owned
-machines are phase 1.
+**Status: 0.2.** Rented GPUs from the CLI or Python, no daemon. Requests, leases
+and pre-emption across owned machines (lisbon's 3060, toronto's M6) are the
+next phase: [orientation](plans/gipper/orientation.md) ·
+[architecture](plans/gipper/architecture.md) · [plan](plans/gipper/itemized-plan.md).
 
 ## Install
 
 ```
 uv tool install -e ~/Projects/gipper
+cp deploy/gipper-reap.* ~/.config/systemd/user/ && systemctl --user enable --now gipper-reap.timer
 ```
 
-Provider keys live in `gipper/.env` (mode 600, git-ignored) or the environment:
+Keys go in `gipper/.env` (mode 600, git-ignored) or the environment:
 `RUNPOD_API_KEY`, `VAST_API_KEY`, `SHADEFORM_API_KEY`. A provider without a key
-is skipped (Vast's and Shadeform's offers are still listed by `gpus`). Keys only
-ever travel in a request header; receipts and errors are scrubbed of all of them.
-Machines get gipper's own ssh key (`~/.config/gipper/id_ed25519`), never an API key.
+is skipped when renting. Keys only travel in request headers, and receipts and
+errors are scrubbed of them. Machines get gipper's own ssh key
+(`~/.config/gipper/id_ed25519`), never an API key.
 
-## Rented GPUs
+## Use
 
 ```
-gipper pod gpus --min-mem 20 --region US,CA [--udp]   # offers across every market, ranked
-gipper pod account                    # balance per provider
-gipper pod estimate job.toml          # likely wall time and dollars per offer
+gipper pod gpus --min-mem 24 --region US,CA [--udp]   # what's on offer, scored for a 30-minute job
+gipper pod estimate job.toml                          # how long and how much, offer by offer
 gipper pod run job.toml [--dry-run] [--provider vast] [--gpu "RTX 4090"]
-gipper pod ls | reap [--dry-run] | cost [--since YYYY-MM-DD]
-gipper ledger [--since ...] [--job ID]
+gipper pod hosts                                      # what gipper has learned about providers and machines
+gipper pod cost [--since 2026-10-27]                  # per job: computed and billed
+gipper pod ls | reap [--dry-run] | reconcile | account
+gipper ledger [--since ...] [--job ID]                # raw receipts
 ```
 
-A job is one TOML file (full reference in `gipper/job.py`; examples in
-`examples/`): what to upload, the command, what to bring back, how much GPU
-memory it needs, where it may run, which ports it publishes, and its budget.
+A job ([`examples/smoke.toml`](examples/smoke.toml); every field in
+[`gipper/job.py`](gipper/job.py) and [`gipper/placement.py`](gipper/placement.py)):
 
-### Markets
+```toml
+name = "carla-cadence"
+workload = "voxhaul-compare"          # jobs with the same workload share a memory of compute times
 
-| | Runpod | Vast.ai | Shadeform |
+[gpu]
+min_mem_gb = 24
+prefer = ["RTX 4090", "RTX A6000"]    # in order; names match across providers
+regions = ["US", "CA"]                # ISO country codes; default anywhere
+providers = ["vast", "runpod"]        # default: every provider with a key
+
+[pod]
+ports = ["5004/udp"]                  # published; UDP rules out Runpod
+
+[[inputs]]
+src = "~/Projects/voxhaul"
+dst = "voxhaul"
+exclude = [".git", "runs"]
+
+[[outputs]]
+src = "out"
+dst = "~/Projects/voxhaul/runs/x/out"
+
+[run]
+command = "python -m voxhaul.compare"
+checkpoint = { src = "out", every_s = 300 }
+
+[budget]
+max_usd = 1.0
+max_hours = 2.0
+
+[placement]                           # optional, and better than memory's guess
+compute_s = 900
+setup_download_gb = 5                 # weights and wheels the job fetches itself
+```
+
+## How gipper chooses
+
+Every offer is judged on the whole run, not its hourly price
+([docs/placement.md](docs/placement.md) has the details):
+
+- **Time:** machine ready + setup + upload + the job's own downloads + compute +
+  output download. Each figure comes from the job's `[placement]` hints, from
+  memory, from what the provider advertises (Vast publishes host link speeds),
+  or from a stated default, and `estimate` says which.
+- **Dollars:** rental for that time, plus Vast's bandwidth fees, times what this
+  provider has really billed compared with rate × lifetime on real work (Vast
+  about ×1.1: disk from creation, rentals rounded up; Runpod about ×1.0).
+- **Risk:** the chance the host turns out bad, from memory: the machine's own
+  record, pulled towards its provider's, pulled towards 10% for a stranger.
+  A failure costs `failure_cost_usd` ($1) plus the time and rent it wastes.
+- **Score** = dollars + risk + waiting, with an hour of waiting worth
+  `hour_value_usd` ($3).
+
+There is no short-or-long switch. On a 15-minute job, a $0.40/h Vast 4090 and a
+$0.69/h Runpod 4090 are 8 cents apart, less than the 25 cents a 23% chance of a
+bad host costs, so Runpod wins. On a ten-hour job they are $2.57 apart, and Vast
+wins. `prefer` still comes first, and an offer whose expected cost
+exceeds `max_usd` is left out. `[placement] objective = "cost"` stops valuing
+waiting (failures still cost); `"time"` values it at $50/h.
+
+Memory is the ledger itself. A rental is *good* once its job started, and *bad*
+if the host was broken (busy GPU, CUDA that won't initialise, ssh that never came
+up, a failed probe) or the connection was lost. A host that works but doesn't
+suit the job (`run.Unsuitable`), a job that fails on a working host, and an
+error on this side count against nobody.
+
+## What `pod run` guarantees
+
+- **The machine is given back, and gipper checks.** Teardown runs in `finally`
+  after success, failure, Ctrl-C or a cap, and counts as done only when the
+  provider stops listing the machine. Until then it stays
+  `pod.termination_pending`, gipper rents no replacement, and the reaper (every
+  15 minutes) retries it first. The reaper also ends any `gipper-*` machine the
+  ledger forgot or that passed its deadline, on every provider. The job runs
+  detached under `timeout max_hours`, so a lost client can't overrun it.
+- **Hosts are checked before anything is uploaded:** the GPU is idle,
+  `cuInit` succeeds (with one retry without CUDA forward-compat libraries on
+  error 804), the compute capability meets the job's floor, and optionally a
+  measured transfer probe passes. A bad host is replaced, up to 3 times.
+- **Caps:** per job (`max_usd`, `max_hours`, `[gpu] max_usd_per_h`) and per day
+  (`daily_cap_usd` in `~/.config/gipper/config.toml`, default $5). Daily spend
+  uses providers' bills where reconciled.
+- **Outputs** sync down every `checkpoint.every_s` and are salvaged on failure.
+- **Environment:** each provider's default image unless `[pod] image` says
+  otherwise. Each job sources a bootstrap providing `uv` and
+  `GIPPER_TORCH_INDEX`, the PyTorch wheel index for the host's driver. Published
+  ports arrive as `GIPPER_PUBLIC_IP` and `GIPPER_PORT_<n>_<PROTO>` (the outside
+  port, which on Vast differs from the inside one).
+
+## Markets
+
+| | Runpod | Vast.ai | Shadeform (unused) |
 |---|---|---|---|
-| What you rent | container (root) | container on one host's machine (root) | whole VM on one of 30+ clouds (`shadeform` user) |
-| Strength | secure cloud, network volumes | consumer GPUs (3090/4090/5090) in many places, cheap | datacenter cards (A6000, L40S, H100) with one bill |
-| Ports | TCP/HTTP only, no UDP | TCP and UDP, random external port on a shared IP | TCP and UDP (UFW at boot; the cloud may filter too) |
-| Region filter | `countryCodes`; stock asked per country | `geolocation` | country from the region's display name |
+| You rent | container, root | container on someone's machine, root | VM on one of 30+ clouds, user `shadeform` |
+| Good for | reliability (81 of 81 hosts good so far), secure cloud, network volumes | consumer GPUs everywhere, cheap, UDP | datacenter cards with one bill |
+| Ports | TCP/HTTP, **no UDP** | TCP and UDP, random outside port | TCP and UDP (UFW; the cloud may filter) |
+| Bills | per pod per day | itemised: GPU, disk, bandwidth | no billing API |
 
-`[gpu] regions = ["US", "CA"]` keeps a job in those countries on every market
-(so a 4090 that only exists in Iceland is not rented for US-facing RTC work).
-`[pod] ports = ["5004/udp"]` publishes ports, skips markets that can't, and gives
-the job `GIPPER_PUBLIC_IP` and `GIPPER_PORT_5004_UDP` (the outside port to
-advertise, e.g. as an ICE candidate). `[gpu] providers` narrows the markets;
-`prefer` names match across them ("RTX 4090" is Runpod's "NVIDIA GeForce RTX 4090").
+An RTC job that must stay on Runpod can relay media through Cloudflare's TURN
+over TCP/TLS on 443, at some latency cost.
 
-What `pod run` guarantees:
-- **Cleanup is attempted and verified.** Termination runs in `finally` after
-  success, failure, Ctrl-C or a cap. Accepted DELETE is followed by bounded
-  provider-list checks. Only verified absence emits `pod.closure_verified`,
-  `pod.terminate` and final estimated rental spend. API errors or continued
-  visibility retain `pod.termination_pending`; `run.end` reports that outcome,
-  and the reaper prioritizes the owned ID without waiting for its deadline.
-  No replacement host is rented while prior closure is unverified. A detached
-  job's `timeout` bounds its computation, not the rental bill: unreachable cloud
-  control planes can keep charging until removal is actually confirmed.
-  External guards and reaper sweeps remain necessary. Shadeform also offers
-  provider-side auto-delete deadlines/spend ceilings.
-- **Caps:** per job (`[budget] max_usd`, `max_hours`) and per day
-  (`daily_cap_usd` in `~/.config/gipper/config.toml`, default $5); a price
-  ceiling (`[gpu] max_usd_per_h`, default 2x the cheapest stocked offer of the
-  GPUs the job prefers, or of all if it prefers none).
-- **Placement:** one ranking across markets: preferred GPUs first, then offers
-  with known stock, then price. If an offer is gone, the next is tried; a host
-  that is busy, broken or never comes up is replaced (up to 3). Runpod: community
-  cloud with a public IP first, then secure. Vast: verified machines, reliability
-  >= 0.97, >= 100 Mb/s down, enough direct ports.
-- **Environment:** each provider's default image (`runpod/base`, Vast's
-  `vastai/base-image`, Shadeform's CUDA OS) unless `[pod] image` says otherwise;
-  each job sources a bootstrap that provides `uv` and `GIPPER_TORCH_INDEX`, the
-  PyTorch wheel index matching the host's driver
-  (`uv pip install torch --index-url "$GIPPER_TORCH_INDEX"`).
-- **Outputs** are synced down every `checkpoint.every_s` while running and
-  salvaged before teardown if anything goes wrong.
+## From another repo
 
-When renting UDP isn't worth it, an RTC job on Runpod can relay media through
-Cloudflare's TURN over TCP/TLS on 443 (`turn.cloudflare.com`), at some latency cost.
+The CLI is the simplest surface. From Python (gipper is stdlib-only):
 
-## For clients (other repos driving gipper)
+```python
+from gipper import run, ledger
+from gipper.job import load
+from gipper.providers import load as provider
 
-The CLI is the stable surface: `gipper pod run JOB.toml [--provider vast]`. From
-Python:
+job = load("job.toml")
+offers, ceiling, notes = run.plan(job, provider="vast")   # ranked; each has .estimate
+run_id, outcome = run.run(job, provider="vast", log_dir="runs/x")
+provider("vast").list_ours()                              # for your own guards
+```
 
-- `from gipper import run`: use `run.plan(job, provider=)` for ranked offers,
-  `run.run(job, provider=, dry_run=, log_dir=)` to do the run, and
-  `run.preflight` / `run.BadHost` to add host checks.
-- `from gipper.providers import load`: `load("vast").list_ours()` and
-  `.terminate(id)` for guards. `load("runpod").api()` is the raw Runpod client.
-- `from gipper import ledger`. Machine receipts carry `provider`; a receipt
-  without one is Runpod's.
+`run.preflight(remote)` can be wrapped to add host checks of your own: raise
+`run.Unsuitable` when the host works but doesn't suit the job, and `run.BadHost`
+when it's broken. Both replace the host, but only `BadHost` counts against it in
+memory. To move a job between providers, check [docs/clients.md](docs/clients.md).
 
-To move a Runpod job to Vast, set `[gpu] providers = ["vast"]` (or drop the line
-to shop both). Also check four things:
-- Runpod-only fields are ignored elsewhere: `cloud`, and `volume`, which pins a
-  job to Runpod.
-- Don't hardcode `/root/job` or `/workspace`; Shadeform's home is
-  `/home/shadeform`, so use relative paths.
-- Use plain GPU names in `prefer`.
-- A Vast host's driver can be older, as can its CUDA version (a 535 driver
-  showed up in Quebec), so pin that in `preflight` if the job needs it.
+## More
 
-`gipper.runpod.api.Api` and `gipper.runpod.run._wait_ready` remain for scripts
-written before 2026-10-26; any other `gipper.runpod.run` name now raises an
-error that points here.
-
-For opt-in total-cost/time placement, measured transfer checks and early actual
-CUDA initialization, see [workload placement](docs/workload-placement.md).
-
-## Ledger
-
-`~/.local/share/gipper/receipts/YYYY-MM.jsonl`, one `gipper.receipt/v1`
-record per line: `estimate`, `pod.create`, `pod.ready`, `host.ok`/`host.reject`,
-`run.start`, `checkpoint`, `collect`, `cap`, `error`, `pod.terminate`, `spend`,
-`run.end`, `reap`, `pod.termination_pending`, `pod.closure_verified`. Machine receipts carry `provider` (absent on receipts from
-before 2026-10-26, which are all Runpod's). Spend is computed from the machine's
-own hourly price and its lifetime.
-
-## Lessons from the first runs (2026-10-20)
-
-- Cloudflare in front of Runpod's API rejects Python's default user agent
-  (error 1010): gipper sends its own.
-- Filtering hosts by CUDA version or requiring a community public IP can empty
-  the market; gipper keeps the public-IP need but falls back to secure cloud and
-  picks the torch build per host instead of filtering hosts.
-- Stock moves fast: ask for several GPU types in preference order.
-- Backgrounding `cd X && nohup job &` over ssh backgrounds the whole list, so
-  ssh waits for the job; gipper backgrounds only the job, with `setsid` and
-  every stream redirected.
-- Host health varies, especially on community cloud: one 5090 was at 100% use
-  with 1 GB held before the job started, an L40S host failed its first CUDA call
-  twice, an RTX 5000 Ada was "busy or unavailable". gipper now preflights the GPU
-  before uploading and replaces a bad host (up to 3), recording `host.reject`
-  with the machine id.
-- The torch build is chosen from the driver version, not from nvidia-smi's
-  "CUDA Version" (CUDA forward-compat libraries in an image inflate it); the
-  default image carries no CUDA at all.
-- Micro-batch 1 leaves a 4090 mostly idle for LoRA training (3.9 s/step vs the
-  3060's 4.5): keep the effective batch, raise the micro-batch (e.g. 4 x 4).
-- A unit started with `systemd-run` disappears when stopped; to resume it,
-  recreate it with the same command line rather than `systemctl start`.
-- Runpod's stock is per country, not just per type: on 2026-10-26 the only 4090
-  in stock was in EUR-IS-2 (Iceland). Without a region filter gipper would have
-  rented it for US-facing work.
-- Vast, first runs (2026-10-27). A US 4090 smoke job: ssh in 38 s, the whole
-  round trip in 47 s, about $0.006. On the UDP echo job, the first host (an RTX
-  3060 in Quebec) was at 100% GPU use before the job started, and preflight
-  replaced it. The second took 214 s to reach ssh (image pull). UDP echoed 5 of
-  5 from lisbon in about 22 ms, and replies came from the same public port, so
-  `GIPPER_PUBLIC_IP:GIPPER_PORT_<n>_UDP` is the address to advertise. Vast's
-  credit fell $0.04 against $0.016 computed; the ledger's Vast spend is an
-  undercount until we know what else Vast bills (perhaps disk or a minimum).
-- First real job: 227 VoxCPM2 takes on a secure-cloud 4090 in 19.7 minutes
-  (about 4 of them setup) for $0.29; the same work was ~3.5 h on toronto.
+- [docs/placement.md](docs/placement.md): the cost model, memory and every `[placement]` field
+- [docs/clients.md](docs/clients.md): writing jobs that run on any provider; the Python surface
+- [docs/lessons.md](docs/lessons.md): what the first weeks of rentals taught
+- [AGENTS.md](AGENTS.md): for agents changing gipper
+- [CHANGELOG.md](CHANGELOG.md)

@@ -10,7 +10,6 @@ import os
 import time
 import uuid
 from datetime import datetime, timezone
-from pathlib import Path
 
 from gipper.config import DATA, redact
 
@@ -59,7 +58,9 @@ def read(since=None, kinds=None, job=None):
 
 
 def spend_since(since):
-    return sum(r["payload"].get("usd", 0.0) for r in read(since=since, kinds={"spend"}))
+    """Dollars spent since `since`: providers' bills where reconciled, else gipper's own."""
+    from gipper.billing import spend_since as billed_or_computed
+    return billed_or_computed(since)
 
 
 def today_start():
