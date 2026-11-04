@@ -8,21 +8,18 @@ working *on* gipper.
 
 ## Before you change anything
 
-- **Clients run this checkout live.** gipper is installed editable
-  (`uv tool install -e`), and other clients import it from here, often while
-  a paid job is running. Check first:
-  `pgrep -af "gipper pod run|cloud.py|runner.run"`. Do non-trivial work in a git
-  worktree on a branch (`git worktree add ../gipper-<topic> -b <topic>`), and
-  merge when nothing is running.
+- **Protect running clients.** Editable installs import directly from their
+  checkout. Check for active runs before editing a shared installation:
+  `pgrep -af "gipper pod run|cloud.py|runner.run"`. Use a git worktree on a
+  branch for non-trivial changes, and integrate when no clients are running.
 - **Keep the client surface stable** ([docs/clients.md](docs/clients.md)):
   `run.run`, `run.plan`, `run.estimate`, `run.preflight`, `run.settings`,
   `run.BadHost`, `job.load`, `providers.load(...)` with its methods, `ledger`,
-  `ssh.Remote`, and the `[placement]` fields client jobs use. About 80 client
-  scripts wrap `run.preflight`, and many wrap `run.plan` and `run.settings`, so
-  `run.py` must keep looking those up by module-global name at call time.
-- **Run the tests:** `uv run --extra test pytest -q` (under a second, no network).
-  On this machine the bare `python3` is a pyenv shim that hangs; use
-  `/usr/bin/python3` or `uv run`.
+  `ssh.Remote`, and the `[placement]` fields client jobs use. Clients can wrap
+  `run.preflight`, `run.plan`, and `run.settings`; `run.py` must keep looking
+  these up by module-global name at call time.
+- **Run the tests:** `uv run --extra test pytest -q` (no network or rentals).
+  Use `uv run` to select the project's Python environment.
 
 ## Invariants
 
@@ -38,15 +35,15 @@ working *on* gipper.
    old receipts without them: receipts before 2026-10-26 have no `provider` and
    are Runpod's; before 0.2 there's no `machine` on `pod.create`, no `compute_s`
    on `run.end` and no `kind` on `host.reject`.
-7. **Memory must not blame a host for what isn't its fault.** Job-specific
+4. **Memory must not blame a host for what isn't its fault.** Job-specific
    rejects raise `run.Unsuitable`; only broken hosts and lost connections count
    as bad; compute time comes only from successful runs; link speed comes only
    from real transfers of 20 MB or more; the billing factor only from rentals of
    10 minutes or more. A wrong memory steers every later run.
-4. **Never touch a machine not named `gipper-*`**, and no provider resource
+5. **Never touch a machine not named `gipper-*`**, and no provider resource
    gipper didn't create.
-5. **One provider failing never stops the others** (shopping, reaping, reconciling).
-6. **Stdlib only.** No runtime dependencies.
+6. **One provider failing never stops the others** (shopping, reaping, reconciling).
+7. **Stdlib only.** No runtime dependencies.
 
 ## Map
 
@@ -83,7 +80,7 @@ Test decisions and parsing, not plumbing: what gets chosen, what counts as a bad
 host, what gets billed, what a job file accepts, what the reaper ends. Build
 histories from receipts (`tests/conftest.py: receipt`), and providers' answers
 from real response shapes. Don't build tests that mock `run.run`'s internals
-end to end: a real smoke run (about 3 cents on Vast) is the test for that path.
+end to end: an explicitly authorized live smoke run qualifies that path separately.
 
 ## Spending money
 

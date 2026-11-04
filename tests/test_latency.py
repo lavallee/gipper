@@ -24,7 +24,7 @@ def test_best_round_trip_in_order_of_trust():
         receipt("market.rtt", {"origin": HERE, "samples": [{"provider": "vast", "machine": "seen", "country": "AU", "ms": 240}]}),
         receipt("market.rtt", {"origin": HERE, "samples": [{"provider": "vast", "machine": "other", "country": "CA", "ms": 30}]}),
         receipt("market.rtt", {"origin": "elsewhere", "samples": [{"provider": "vast", "machine": "x", "country": "CA", "ms": 999}]})])
-    p = load_placement({"profile": "interactive", "latency_target": "toronto",
+    p = load_placement({"profile": "interactive", "latency_target": "interactive-client",
                         "measured_rtt_ms_by_machine": {"vast:machine:own": 12}})
     assert best_rtt(_offer("own", "US", pinged=80), p, h) == (12, "measured")
     assert best_rtt(_offer("new", "US", pinged=80), p, h) == (80, "pinged from here (proxy)")
@@ -35,7 +35,7 @@ def test_best_round_trip_in_order_of_trust():
 
 def test_pings_pass_max_rtt_only_when_the_user_is_here():
     near, far = _offer("a", "CA", pinged=25), _offer("b", "AU", pinged=240)
-    elsewhere = load_placement({"profile": "interactive", "latency_target": "toronto", "max_rtt_ms": 50})
+    elsewhere = load_placement({"profile": "interactive", "latency_target": "interactive-client", "max_rtt_ms": 50})
     here = load_placement({"profile": "interactive", "latency_target": "here", "max_rtt_ms": 50})
     assert admit([near, far], placement=elsewhere) == []          # a ping from here isn't the user's round trip
     assert admit([near, far], placement=here) == [near]

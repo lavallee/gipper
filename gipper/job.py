@@ -1,9 +1,9 @@
 """The job spec: one TOML file, shared by every executor (rented GPUs from Runpod,
 Vast and Shadeform now; owned machines planned).
 
-    name = "carla-cadence"
+    name = "batch-inference"
     workload = "example-workload"          # what this is, for throughput history
-    units = { name = "takes", count = 200 }
+    units = { name = "items", count = 200 }
     sensitivity = "cloud-ok"              # "owned-only" refuses rented GPUs
 
     [gpu]
@@ -12,7 +12,7 @@ Vast and Shadeform now; owned machines planned).
     regions = ["US", "CA"]                 # ISO country codes it may run in; default anywhere
     providers = ["vast", "runpod"]         # markets to shop; default all with a key
     cloud = "COMMUNITY"                    # Runpod: COMMUNITY (then SECURE) or SECURE
-    max_usd_per_h = 0.6                    # optional ceiling; default 2x the cheapest that fits
+    max_usd_per_h = 0.6                    # optional hourly ceiling; no ceiling by default
 
     [pod]                                  # optional overrides
     image = "runpod/base:1.4.1-cuda1300-ubuntu2404"   # default: each provider's own
@@ -23,7 +23,7 @@ Vast and Shadeform now; owned machines planned).
                                            # rules out Runpod.
 
     [env]                                  # non-secret environment for the job
-    HF_HOME = "/root/hf"
+    PYTHONUNBUFFERED = "1"
 
     [[inputs]]                             # local -> pod, under /root/job/<dst>
     src = "~/gpu-project"

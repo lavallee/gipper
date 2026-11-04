@@ -25,7 +25,7 @@ Code: [`gipper/costs.py`](../gipper/costs.py) (the estimate and score),
 
 ```
 wall     = ready + setup + upload + fetch + compute + download
-expected = wall x $/h x billing factor + bandwidth fees
+expected = (wall x $/h + bandwidth fees) x billing factor
 risk     = p_fail x (failure_cost_usd + (ready + 60 s) x ($/h + hour value))
 score    = expected + risk + hour value x wall
 ```
@@ -79,8 +79,8 @@ comes from, in order of trust:
 
 1. the job's own `measured_rtt_ms_by_machine`, measured from `latency_target`;
 2. a ping from this machine just before renting (`probe_rtt`, on by default for
-   interactive jobs; the 48 cheapest hosts, about 10 seconds; roughly 60% of
-   Vast hosts answer);
+   interactive jobs; up to the 48 cheapest hosts; hosts that do not answer
+   have no probe measurement);
 3. memory of that machine's round trip from here (`host.rtt` on every rental,
    `market.rtt` from earlier pings);
 4. the median round trip from here to hosts in its country.
@@ -89,10 +89,10 @@ Only 1 counts as measured for `max_rtt_ms`, unless `latency_target = "here"`
 (the user is at this machine), when 2 counts too. Otherwise 2–4 are proxies:
 they rank offers but can't pass the limit.
 
-Country is the roughest proxy, and Vast's labels can be wrong: on 2026-10-28 a
-host listed in China answered in 81 ms from here, from an IP another host had
-listed as the United States. Vast doesn't publish host coordinates, so a
-`max_distance_km` limit currently leaves no Vast offers.
+Country is the roughest proxy. Provider labels may be inaccurate and are not a
+substitute for measurements from the client that needs low latency. Vast does
+not expose coordinates through this adapter, so a `max_distance_km` limit
+currently leaves no Vast offers.
 
 Batch jobs (any objective but `latency`) ignore all of this. A cheap host on the
 other side of the world wins whenever the whole run costs less; its slower
@@ -114,23 +114,18 @@ or `offer.placement_estimate` keep working.
 Settings live in `~/.config/gipper/config.toml`: `hour_value_usd`,
 `failure_cost_usd` ($1) and `history_days` (90).
 
-## Worked example
+## How history changes placement
 
-Memory on 2026-10-28: 82 Runpod rentals (81 good) and 27 Vast rentals (18 good,
-6 bad); billing factors ×1.01 Runpod and ×1.10 Vast. Take a job with 15 minutes
-of compute, a Vast 4090 at $0.40/h against a Runpod 4090 at $0.69/h (output of
-`costs.estimate` with that memory):
+Consider two otherwise comparable offers: one has a lower hourly rate, while
+the other has a better host record. On a short job the expected cost of retrying
+a failed host can outweigh the hourly saving. On a long job, the saving accrues
+for more hours and can reverse the ranking.
 
-| | wall | expected | risk | score |
-|---|---|---|---|---|
-| Vast, 15 min | 18 min | $0.13 | 23% → $0.25 | 1.27 |
-| Runpod, 15 min | 18 min | $0.21 | 0.5% → $0.005 | **1.14** |
-| Vast, 10 h | 10 h | $4.41 | $0.25 | **34.80** |
-| Runpod, 10 h | 10 h | $6.98 | $0.005 | 37.16 |
-
-The short job goes to Runpod by 13 cents, and the long one to Vast by $2.35. A
-Vast machine with its own good record (9% after a few clean runs) narrows the
-gap on short jobs too.
+This is a consequence of the score, not a fixed preference for a provider.
+A fresh ledger starts both providers with the same 10% failure prior and a 1.0
+billing factor. Your qualifying receipts update those values; the job's
+placement hints and measurements determine the other inputs. Use
+`gipper pod estimate` to inspect actual candidate scores and their assumptions.
 
 ## Memory
 

@@ -12,6 +12,8 @@
 
 ### Changed
 
+- Present gipper as a standalone GPU job runner, with workload-neutral examples
+  and operational guidance based on each installation's own history.
 - Replace internal planning with a public roadmap and full third-party research
   captures with source references. Document billing and host-trust limitations.
 

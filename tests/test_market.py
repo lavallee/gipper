@@ -33,7 +33,7 @@ def test_preference_then_stock_then_price():
 def test_interactive_jobs_go_to_the_measured_nearest_host():
     from gipper.job import Job
     from gipper.placement import load_placement
-    p = load_placement({"profile": "interactive", "latency_target": "toronto", "preferred_countries": ["CA"],
+    p = load_placement({"profile": "interactive", "latency_target": "interactive-client", "preferred_countries": ["CA"],
                         "measured_rtt_ms_by_machine": {"vast:machine:far": 90, "vast:machine:near": 20}})
     job = Job(name="x", workload="w", command="true", placement=p)
     far = Offer("vast", "RTX 4090", 24, 0.30, country="US", stock="yes", ref={"machine": "far"})

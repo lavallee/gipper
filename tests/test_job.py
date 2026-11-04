@@ -43,8 +43,8 @@ def test_placement_defaults_when_absent(tmp_path):
     assert p.objective == "auto" and p.compute_s is None and p.probe_transfer_mb == 0
 
 
-# The [placement] table fodder's cloud jobs use (cheers-dialect, 2026-10-28)
-FODDER = '''[placement]
+# Representative placement fields from pre-0.2 client jobs
+LEGACY_CLIENT_PLACEMENT = '''[placement]
 profile = "batch"
 objective = "cost"
 setup_s = 120
@@ -66,12 +66,12 @@ A40 = 250
 
 
 def test_client_jobs_from_0_1_still_load(tmp_path):
-    p = _job(tmp_path, BASE + FODDER).placement
+    p = _job(tmp_path, BASE + LEGACY_CLIENT_PLACEMENT).placement
     assert p.objective == "cost" and p.compute_s_by_gpu == {"A40": 250} and p.min_cuda == 12.8
 
 
 def test_interactive_profile_loads(tmp_path):
-    p = _job(tmp_path, BASE + '[placement]\nprofile = "interactive"\nlatency_target = "toronto"\nmax_rtt_ms = 50\n'
+    p = _job(tmp_path, BASE + '[placement]\nprofile = "interactive"\nlatency_target = "interactive-client"\nmax_rtt_ms = 50\n'
                              'preferred_countries = ["ca", "us"]\n[placement.measured_rtt_ms_by_machine]\n"vast:machine:7" = 28\n').placement
     assert p.objective == "latency" and p.preferred_countries == ["CA", "US"]
 

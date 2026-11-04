@@ -27,7 +27,7 @@ def test_client_surface_still_there():
 
 
 def test_estimates_keep_0_1_field_names():
-    """fodder's reports read these from estimate receipts and offer.placement_estimate."""
+    """Existing client reports read these from estimate receipts and offer.placement_estimate."""
     from gipper.job import Job
     from gipper.market import Offer
     from gipper.placement import Placement, estimate_offer, rank_for_job

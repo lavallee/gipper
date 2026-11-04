@@ -1,16 +1,22 @@
 # gipper
 
-Run GPU jobs across cloud markets from one TOML file. gipper estimates the cost,
-rents a GPU, runs your job, brings the results home, gives
-the GPU back, and puts every second and dollar on a ledger. It shops two markets
-today, Runpod and Vast.ai (Shadeform is wired in but unused), and it learns from
-its own rentals: which providers and machines turn out bad, how fast transfers
-really go, how long a workload takes, and what providers actually bill.
+gipper runs jobs on rented NVIDIA GPUs. Describe the hardware, command, input
+files, outputs, and budget in a TOML file; gipper compares cloud offers, rents a
+machine, checks it, runs the job, collects results, and verifies teardown.
 
-**Status: 0.2.2, alpha.** Rented NVIDIA GPUs from the CLI or Python, no daemon.
-Runpod and Vast have been used for real jobs; Shadeform is implemented but has
-not had a live smoke test. Owned-machine scheduling is planned, not implemented
-([roadmap](ROADMAP.md)). Licensed under [MIT](LICENSE).
+Use it for model training and fine-tuning, batch inference, rendering, or other
+GPU workloads that run from a Linux shell. Your job supplies its own software
+and dependencies. The same CLI and Python API work across Runpod and Vast.ai.
+
+Placement considers the whole job: startup, setup, transfers, compute, bandwidth
+fees, and host failures. An append-only local ledger records runs and costs;
+future estimates learn from **your own** workloads and provider history. A fresh
+installation starts with stated defaults, not someone else's rental history.
+
+**Status: 0.2.2, alpha.** Linux client, CLI and Python API, no daemon. Runpod and
+Vast have live-run validation; Shadeform is experimental and has not had a live
+smoke test. See the [roadmap](ROADMAP.md) for planned features and
+[SECURITY.md](SECURITY.md) for trust and billing limits. Licensed under [MIT](LICENSE).
 
 ## Install
 
@@ -149,23 +155,23 @@ Every offer is judged on the whole run, not its hourly price
   memory, from what the provider advertises (Vast publishes host link speeds),
   or from a stated default, and `estimate` says which.
 - **Dollars:** rental for that time, plus Vast's bandwidth fees, times what this
-  provider has really billed compared with rate × lifetime on real work (Vast
-  about ×1.1: disk from creation, rentals rounded up; Runpod about ×1.0).
+  provider has billed compared with rate × lifetime in your ledger. Without
+  qualifying history, the billing factor is 1.0; storage and rounding can make
+  the final bill differ.
 - **Risk:** the chance the host turns out bad, from memory: the machine's own
   record, pulled towards its provider's, pulled towards 10% for a stranger.
   A failure costs `failure_cost_usd` ($1) plus the time and rent it wastes.
 - **Score** = dollars + risk + waiting, with an hour of waiting worth
   `hour_value_usd` ($3).
 
-There is no short-or-long switch. On a 15-minute job, a $0.40/h Vast 4090 and a
-$0.69/h Runpod 4090 are 8 cents apart, less than the 25 cents a 23% chance of a
-bad host costs, so Runpod wins. On a ten-hour job they are $2.57 apart, and Vast
-wins. `prefer` still comes first, and an offer whose expected cost
-exceeds `max_usd` is left out. `[placement] objective = "cost"` stops valuing
-waiting (failures still cost); `"time"` values it at $50/h. Geography only
-matters to real-time work: `profile = "interactive"` pings candidate hosts
-before renting and ranks by round trip first. Batch work happily goes to
-Australia at night if it's cheaper.
+For short jobs, startup time and the cost of a failed host can outweigh a lower
+hourly price. For long jobs, the hourly rate has more influence. Provider names
+do not determine the winner: the ranking follows the job and available history.
+`prefer` comes first, and an offer whose expected cost exceeds `max_usd` is
+left out. `[placement] objective = "cost"` removes the value of waiting while
+still pricing failures; `"time"` values waiting at $50/h. For latency-sensitive
+services, `profile = "interactive"` probes candidate hosts and ranks by round
+trip first. Batch jobs account for transfer time without preferring nearby hosts.
 
 Memory is the ledger itself. A rental is *good* once its job started, and *bad*
 if the host was broken (busy GPU, CUDA that won't initialise, ssh that never came
@@ -209,7 +215,7 @@ error on this side count against nobody.
 An RTC job that must stay on Runpod can relay media through Cloudflare's TURN
 over TCP/TLS on 443, at some latency cost.
 
-## From another repo
+## Python API
 
 The CLI is the simplest surface. From Python (gipper is stdlib-only):
 
@@ -233,7 +239,7 @@ memory. To move a job between providers, check [docs/clients.md](docs/clients.md
 
 - [docs/placement.md](docs/placement.md): the cost model, memory and every `[placement]` field
 - [docs/clients.md](docs/clients.md): writing jobs that run on any provider; the Python surface
-- [docs/lessons.md](docs/lessons.md): what the first weeks of rentals taught
+- [docs/lessons.md](docs/lessons.md): operational behavior and troubleshooting
 - [CONTRIBUTING.md](CONTRIBUTING.md): development and tests
 - [SECURITY.md](SECURITY.md): trust model and vulnerability reports
 - [RELEASING.md](RELEASING.md): release checklist
