@@ -2,7 +2,7 @@
 
 Every record is `gipper.receipt/v1`: {schema, id, ts, kind, job, refs, payload}.
 Kinds so far: estimate, pod.create, pod.ready, run.start, run.end, spend,
-checkpoint, collect, pod.terminate, cap, reap, error. Milton, Somm and replay
+checkpoint, collect, pod.terminate, cap, reap, error. External readers and replay
 read these; nothing rewrites them.
 """
 import json

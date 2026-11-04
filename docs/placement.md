@@ -63,7 +63,7 @@ probe never counts: a 2 MiB probe mostly measures ssh start-up, so it reads low.
 ```toml
 [placement]
 profile = "interactive"                         # objective defaults to "latency"
-latency_target = "toronto-unreal-host"          # where the RTTs below were measured from
+latency_target = "interactive-client"          # where the RTTs below were measured from
 measured_rtt_ms_by_machine = { "vast:machine:12345" = 28 }
 max_rtt_ms = 50                                 # unmeasured offers fail this
 preferred_countries = ["CA", "US"]

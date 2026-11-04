@@ -1,9 +1,30 @@
 [project]
 name = "gipper"
 version = "0.2.2"
-description = "GPU work for the Lyra Forge estate: requests not claims, owned machines and rented GPUs, every second and dollar on the ledger"
+description = "Run GPU jobs across cloud markets with cost estimates, verified teardown, and an append-only ledger"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Marc Lavallee" }]
+keywords = ["gpu", "runpod", "vast", "cloud", "batch"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: System :: Distributed Computing",
+]
+
 requires-python = ">=3.12"
 dependencies = []  # stdlib only
+
+[project.urls]
+Repository = "https://github.com/lavallee/gipper"
+Issues = "https://github.com/lavallee/gipper/issues"
+Changelog = "https://github.com/lavallee/gipper/blob/main/CHANGELOG.md"
 
 [project.scripts]
 gipper = "gipper.cli:main"
@@ -12,7 +33,7 @@ gipper = "gipper.cli:main"
 test = ["pytest"]
 
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]

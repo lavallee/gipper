@@ -9,7 +9,7 @@ working *on* gipper.
 ## Before you change anything
 
 - **Clients run this checkout live.** gipper is installed editable
-  (`uv tool install -e`), and fodder and others import it from here, often while
+  (`uv tool install -e`), and other clients import it from here, often while
   a paid job is running. Check first:
   `pgrep -af "gipper pod run|cloud.py|runner.run"`. Do non-trivial work in a git
   worktree on a branch (`git worktree add ../gipper-<topic> -b <topic>`), and

@@ -1,11 +1,12 @@
 # What the rentals taught
 
+Historical observations from October 2026, not current provider guarantees.
 Newest first. Each lesson is either built into gipper now or noted as advice for jobs.
 
 ## 2026-10-28: round trips (0.2.2)
 
 - **Hosts can be measured before renting.** Vast publishes each host's public IP;
-  pinging the 48 cheapest from lisbon took about 10 seconds, and 31 answered
+  pinging the 48 cheapest from the test client took about 10 seconds, and 31 answered
   (Quebec 28 ms, Oregon 83 ms, South Korea 205 ms, Thailand 267 ms).
 - **Vast's country labels aren't reliable.** A host listed in China answered in
   81 ms from an IP another host had listed as the United States. Measured round
@@ -42,12 +43,12 @@ Newest first. Each lesson is either built into gipper now or noted as advice for
 ## 2026-10-27: Vast and verified teardown
 
 - **A first US 4090 smoke run:** ssh in 38 s, the whole round trip 47 s.
-- **UDP works on Vast:** an echo from lisbon replied 5 of 5 in about 22 ms, from
+- **UDP works on Vast:** an echo from the test client replied 5 of 5 in about 22 ms, from
   the same public port, so `GIPPER_PUBLIC_IP:GIPPER_PORT_<n>_UDP` is the address
   to advertise.
 - **Preflight earns its keep:** the first host for the UDP test was at 100% GPU
   use before the job started.
-- **A provider accepting a delete is not the machine being gone.** Fodder's runs
+- **A provider accepting a delete is not the machine being gone.** Client runs
   hit deletes that were accepted but still listed, and list calls that failed
   outright. Teardown now counts only once the machine is absent from the
   provider's list, and no replacement is rented until then.
@@ -81,4 +82,4 @@ Newest first. Each lesson is either built into gipper now or noted as advice for
 - **A unit started with `systemd-run` disappears when stopped.** To resume, run
   the same command line again.
 - **First real job:** 227 VoxCPM2 takes on a secure-cloud 4090 in 19.7 minutes
-  (about 4 of them setup) for $0.29; the same work took about 3.5 h on toronto.
+  (about 4 of them setup) for $0.29; the same work took about 3.5 h on the local machine.

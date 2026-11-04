@@ -5,3 +5,7 @@ __pycache__/
 .pytest_cache/
 .venv/
 examples/*-out/
+dist/
+build/
+.env.*
+!.env.example

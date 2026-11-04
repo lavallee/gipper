@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- MIT license, public installation/contribution/security guidance, release checklist,
+  package metadata, and Linux CI for Python 3.12–3.14 with distribution checks.
+- User-config dotenv support beside `config.toml` for non-editable installs and
+  cleanup services; environment and explicit `GIPPER_ENV` keep precedence, and
+  the checkout `.env` remains a fallback.
+
+### Changed
+
+- Replace internal planning with a public roadmap and full third-party research
+  captures with source references. Document billing and host-trust limitations.
+
 ## 0.2.2 (2026-10-28)
 
 Round trips are measured and remembered; geography only steers work that needs it.
@@ -38,7 +53,7 @@ branch) is available again, on top of 0.2's model:
   `compute_s`, `dlperf`, `assumptions` and the rest, so reports that read
   estimate receipts keep their fields. `offer.placement_estimate`,
   `placement.estimate_offer` and `placement.rank_for_job` work again.
-- **Vast doc captures** behind the placement docs are in `docs/sources/vast/`.
+- **Vast source references** behind the placement docs are in `docs/sources/vast/`.
 
 ## 0.2.0 (2026-10-28)
 
@@ -66,7 +81,7 @@ Offers are judged on the whole run, and gipper learns from its own rentals.
 - **Vast:** advertised speeds, fees, CUDA and compute capability on every offer;
   memory in decimal GB, so nominal 48 GB cards qualify; more machines per GPU
   model are considered.
-- **Kept from fodder's 0.1 additions:** verified teardown, the `cuInit` check
+- **Kept from client contributions in 0.1:** verified teardown, the `cuInit` check
   with its 804 retry, and the optional transfer probe.
 - **Removed:** the default 2× hourly ceiling (the score prices the run; an
   explicit `[gpu] max_usd_per_h` still caps it), and `docs/workload-placement.md`

@@ -1,8 +1,8 @@
 """The job spec: one TOML file, shared by every executor (rented GPUs from Runpod,
-Vast and Shadeform now; local and toronto in phase 2).
+Vast and Shadeform now; owned machines planned).
 
     name = "carla-cadence"
-    workload = "voxhaul-compare"          # what this is, for throughput and Somm
+    workload = "example-workload"          # what this is, for throughput history
     units = { name = "takes", count = 200 }
     sensitivity = "cloud-ok"              # "owned-only" refuses rented GPUs
 
@@ -26,17 +26,17 @@ Vast and Shadeform now; local and toronto in phase 2).
     HF_HOME = "/root/hf"
 
     [[inputs]]                             # local -> pod, under /root/job/<dst>
-    src = "~/Projects/voxhaul"
-    dst = "voxhaul"
+    src = "~/gpu-project"
+    dst = "project"
     exclude = ["runs", ".git", "__pycache__"]
 
     [[outputs]]                            # pod /root/job/<src> -> local <dst>
     src = "out"
-    dst = "~/Projects/voxhaul/runs/x/out"
+    dst = "~/gpu-project/runs/x/out"
 
     [run]
-    setup = "bash voxhaul/scripts/pod-setup.sh"
-    command = "python -m voxhaul.workers.compare ..."
+    setup = "bash project/setup.sh"
+    command = "python project/main.py"
     checkpoint = { src = "out", every_s = 300 }   # synced down while running
 
     [budget]

@@ -29,7 +29,7 @@ round trip to where the user is, then preferred country, then distance, then the
 usual score:
 
     profile = "interactive"
-    latency_target = "toronto-unreal-host"            # names the client the RTTs were measured from;
+    latency_target = "interactive-client"            # names the client the RTTs were measured from;
                                                       # "here" means this machine, so its pings count
     measured_rtt_ms_by_machine = { "vast:machine:12345" = 28 }
     max_rtt_ms = 50                                   # needs a measurement: unmeasured offers fail it

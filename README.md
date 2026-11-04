@@ -1,29 +1,93 @@
 # gipper
 
-GPU work for the Lyra Forge estate. You describe a job in one TOML file, and gipper
-rents the GPU that will get it done best, runs it, brings the results home, gives
+Run GPU jobs across cloud markets from one TOML file. gipper estimates the cost,
+rents a GPU, runs your job, brings the results home, gives
 the GPU back, and puts every second and dollar on a ledger. It shops two markets
 today, Runpod and Vast.ai (Shadeform is wired in but unused), and it learns from
 its own rentals: which providers and machines turn out bad, how fast transfers
 really go, how long a workload takes, and what providers actually bill.
 
-**Status: 0.2.2.** Rented GPUs from the CLI or Python, no daemon. Requests, leases
-and pre-emption across owned machines (lisbon's 3060, toronto's M6) are the
-next phase: [orientation](plans/gipper/orientation.md) ·
-[architecture](plans/gipper/architecture.md) · [plan](plans/gipper/itemized-plan.md).
+**Status: 0.2.2, alpha.** Rented NVIDIA GPUs from the CLI or Python, no daemon.
+Runpod and Vast have been used for real jobs; Shadeform is implemented but has
+not had a live smoke test. Owned-machine scheduling is planned, not implemented
+([roadmap](ROADMAP.md)). Licensed under [MIT](LICENSE).
 
 ## Install
 
-```
-uv tool install -e ~/Projects/gipper
-cp deploy/gipper-reap.* ~/.config/systemd/user/ && systemctl --user enable --now gipper-reap.timer
+Requires Linux, Python 3.12+, OpenSSH (`ssh`, `ssh-keygen`), and `tar` with
+gzip support. `ping` is optional for interactive placement. The Python runtime
+has no third-party dependencies. Remote machines need a Linux shell, `tar`,
+`timeout`, `curl`, and NVIDIA tools; the bootstrap installs `uv` if needed.
+
+Install from source (no PyPI release is assumed):
+
+```sh
+git clone https://github.com/lavallee/gipper.git
+cd gipper
+uv tool install .
+gipper --help
 ```
 
-Keys go in `gipper/.env` (mode 600, git-ignored) or the environment:
-`RUNPOD_API_KEY`, `VAST_API_KEY`, `SHADEFORM_API_KEY`. A provider without a key
-is skipped when renting. Keys only travel in request headers, and receipts and
-errors are scrubbed of them. Machines get gipper's own ssh key
-(`~/.config/gipper/id_ed25519`), never an API key.
+Use `pip install .` in a virtual environment if you do not use `uv`.
+For development, use `uv sync --extra test` (see [CONTRIBUTING.md](CONTRIBUTING.md)).
+
+Configure only the providers you intend to use:
+
+```sh
+mkdir -p ~/.config/gipper
+(umask 077; cp -n .env.example ~/.config/gipper/.env)
+chmod 600 ~/.config/gipper/.env
+# Edit ~/.config/gipper/.env to add your provider keys.
+```
+
+Keys can also come from environment variables: `RUNPOD_API_KEY`, `VAST_API_KEY`,
+`SHADEFORM_API_KEY`. Environment variables take precedence. `GIPPER_ENV` selects
+an exclusive dotenv file; otherwise the user-config dotenv overrides the legacy
+checkout `.env`. A provider without a key is skipped when renting. Keys travel
+in API request headers and are scrubbed from receipts and API error bodies.
+Machines get gipper's own SSH key (`~/.config/gipper/id_ed25519`).
+
+Check estimates before paying for a smoke run:
+
+```sh
+gipper pod estimate examples/smoke.toml --provider vast
+gipper pod run examples/smoke.toml --provider vast --dry-run
+# The following command spends money:
+gipper pod run examples/smoke.toml --provider vast
+gipper pod ls
+```
+
+A dry run contacts provider APIs but does not rent. Set provider-side spending
+alerts too: estimates and client-side caps cannot guarantee a final bill.
+
+Install the cleanup timer on the machine that runs jobs (recommended):
+
+```sh
+mkdir -p ~/.config/systemd/user
+cp deploy/gipper-reap.* ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now gipper-reap.timer
+systemctl --user list-timers gipper-reap.timer
+```
+
+The service expects `~/.local/bin/gipper`; adjust `ExecStart` if installed
+elsewhere. A service cannot see keys exported only in an interactive shell; use
+the user-config dotenv above. User timers require a running user manager. If
+jobs must outlive logout, configure user lingering or an equivalent scheduler.
+See [SECURITY.md](SECURITY.md) for host trust and cleanup limitations.
+
+### Local configuration and data
+
+| Path / override | Purpose |
+|---|---|
+| `~/.config/gipper/config.toml` / `GIPPER_CONFIG` | Settings such as `daily_cap_usd = 5.0`; see [`config.DEFAULTS`](gipper/config.py) |
+| `.env` beside the config file / `GIPPER_ENV` | Provider keys (simple `NAME=value`, no shell expansion) |
+| `~/.config/gipper/` / `GIPPER_KEYS` | SSH key directory |
+| `~/.local/share/gipper/` / `GIPPER_DATA` | Append-only receipts used for history and spend |
+
+Keep the ledger on durable storage and restrict access to it. Separate installs
+sharing a provider account should coordinate: the reaper owns the `gipper-*`
+namespace, not just the machines in one local ledger.
 
 ## Use
 
@@ -41,8 +105,8 @@ A job ([`examples/smoke.toml`](examples/smoke.toml); every field in
 [`gipper/job.py`](gipper/job.py) and [`gipper/placement.py`](gipper/placement.py)):
 
 ```toml
-name = "carla-cadence"
-workload = "voxhaul-compare"          # jobs with the same workload share a memory of compute times
+name = "my-gpu-job"
+workload = "my-workload"          # jobs with the same workload share a memory of compute times
 
 [gpu]
 min_mem_gb = 24
@@ -54,16 +118,16 @@ providers = ["vast", "runpod"]        # default: every provider with a key
 ports = ["5004/udp"]                  # published; UDP rules out Runpod
 
 [[inputs]]
-src = "~/Projects/voxhaul"
-dst = "voxhaul"
+src = "~/gpu-project"
+dst = "project"
 exclude = [".git", "runs"]
 
 [[outputs]]
 src = "out"
-dst = "~/Projects/voxhaul/runs/x/out"
+dst = "~/gpu-project/runs/x/out"
 
 [run]
-command = "python -m voxhaul.compare"
+command = "python project/main.py"
 checkpoint = { src = "out", every_s = 300 }
 
 [budget]
@@ -109,7 +173,7 @@ up, a failed probe) or the connection was lost. A host that works but doesn't
 suit the job (`run.Unsuitable`), a job that fails on a working host, and an
 error on this side count against nobody.
 
-## What `pod run` guarantees
+## Run lifecycle and safeguards
 
 - **The machine is given back, and gipper checks.** Teardown runs in `finally`
   after success, failure, Ctrl-C or a cap, and counts as done only when the
@@ -117,7 +181,8 @@ error on this side count against nobody.
   `pod.termination_pending`, gipper rents no replacement, and the reaper (every
   15 minutes) retries it first. The reaper also ends any `gipper-*` machine the
   ledger forgot or that passed its deadline, on every provider. The job runs
-  detached under `timeout max_hours`, so a lost client can't overrun it.
+  detached under `timeout max_hours`. This limits the command, not the rental;
+  the reaper must still terminate a machine if the client dies.
 - **Hosts are checked before anything is uploaded:** the GPU is idle,
   `cuInit` succeeds (with one retry without CUDA forward-compat libraries on
   error 804), the compute capability meets the job's floor, and optionally a
@@ -137,7 +202,7 @@ error on this side count against nobody.
 | | Runpod | Vast.ai | Shadeform (unused) |
 |---|---|---|---|
 | You rent | container, root | container on someone's machine, root | VM on one of 30+ clouds, user `shadeform` |
-| Good for | reliability (81 of 81 hosts good so far), secure cloud, network volumes | consumer GPUs everywhere, cheap, UDP | datacenter cards with one bill |
+| Good for | secure cloud, network volumes | consumer GPUs everywhere, cheap, UDP | datacenter cards with one bill |
 | Ports | TCP/HTTP, **no UDP** | TCP and UDP, random outside port | TCP and UDP (UFW; the cloud may filter) |
 | Bills | per pod per day | itemised: GPU, disk, bandwidth | no billing API |
 
@@ -169,5 +234,7 @@ memory. To move a job between providers, check [docs/clients.md](docs/clients.md
 - [docs/placement.md](docs/placement.md): the cost model, memory and every `[placement]` field
 - [docs/clients.md](docs/clients.md): writing jobs that run on any provider; the Python surface
 - [docs/lessons.md](docs/lessons.md): what the first weeks of rentals taught
-- [AGENTS.md](AGENTS.md): for agents changing gipper
+- [CONTRIBUTING.md](CONTRIBUTING.md): development and tests
+- [SECURITY.md](SECURITY.md): trust model and vulnerability reports
+- [RELEASING.md](RELEASING.md): release checklist
 - [CHANGELOG.md](CHANGELOG.md)

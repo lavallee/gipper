@@ -1,0 +1,33 @@
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python: ["3.12", "3.13", "3.14"]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+        with:
+          python-version: ${{ matrix.python }}
+      - run: uv sync --locked --extra test
+      - run: uv run --extra test pytest -q
+      - run: uv build
+      - run: uv run --no-project scripts/check_dist.py
+      - name: Install wheel outside the source checkout
+        shell: bash
+        run: |
+          uv venv "$RUNNER_TEMP/gipper-smoke"
+          uv pip install --python "$RUNNER_TEMP/gipper-smoke/bin/python" --no-deps dist/*.whl
+          cd "$RUNNER_TEMP"
+          "$RUNNER_TEMP/gipper-smoke/bin/gipper" --help
+          "$RUNNER_TEMP/gipper-smoke/bin/python" -c 'from importlib.resources import files; assert files("gipper").joinpath("bootstrap.sh").is_file()'

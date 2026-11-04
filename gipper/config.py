@@ -1,7 +1,7 @@
 """Paths, settings and the provider keys.
 
 Each provider key (RUNPOD_API_KEY, VAST_API_KEY, SHADEFORM_API_KEY) comes from the
-environment or gipper's .env (mode 600, git-ignored) and only ever travels in a
+environment or a configured .env (mode 600, git-ignored) and only ever travels in a
 request header: never logged, printed, written elsewhere or passed on a command
 line. `redact()` scrubs every one of them from any text that might be shown or
 recorded.
@@ -60,9 +60,19 @@ KEYS = ("RUNPOD_API_KEY", "VAST_API_KEY", "SHADEFORM_API_KEY")
 
 
 def secret(name, required=True):
-    key = os.environ.get(name) or _dotenv(Path(os.environ.get("GIPPER_ENV", ROOT / ".env"))).get(name)
+    key = os.environ.get(name)
+    if key:
+        return key
+    # Explicit GIPPER_ENV is exclusive (including a missing file). Otherwise
+    # prefer user configuration while retaining editable installs' legacy .env.
+    if "GIPPER_ENV" in os.environ:
+        values = _dotenv(Path(os.environ["GIPPER_ENV"]))
+    else:
+        values = _dotenv(ROOT / ".env")
+        values.update(_dotenv(CONFIG_FILE.parent / ".env"))
+    key = values.get(name)
     if not key and required:
-        raise SystemExit(f"{name} is not set (environment or gipper/.env)")
+        raise SystemExit(f"{name} is not set (environment or configured .env; see GIPPER_ENV)")
     return key or None
 
 

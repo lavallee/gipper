@@ -59,6 +59,5 @@ instead of silently patching nothing.
   combines them by machine.
 - Receipts without `provider` predate 2026-10-26 and are Runpod's.
 
-gipper runs from this checkout for every client (an editable install), so a
-change here reaches running clients' next import. Agents changing gipper should
-read [AGENTS.md](../AGENTS.md).
+An editable install imports code directly from its checkout. Use an isolated
+worktree for changes if clients are using that checkout; see [AGENTS.md](../AGENTS.md).

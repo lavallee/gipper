@@ -1,4 +1,4 @@
-"""gipper: GPU work for the estate.
+"""gipper: GPU jobs across cloud markets.
 
     gipper pod gpus [--min-mem GB] [--region US,CA] [--udp] [--provider P]   offers across markets
     gipper pod estimate JOB.toml [--throughput U/S] [--provider P]           what a run would take and cost
@@ -12,7 +12,7 @@
     gipper ledger [--since YYYY-MM-DD] [--job ID] raw receipts
 
 Providers: runpod, vast, shadeform (keys RUNPOD_API_KEY, VAST_API_KEY,
-SHADEFORM_API_KEY in gipper/.env). Vast and Shadeform list offers without a key.
+SHADEFORM_API_KEY in the environment or ~/.config/gipper/.env). Vast and Shadeform list offers without a key.
 """
 import argparse
 import json
