@@ -41,7 +41,8 @@ def test_corrupt_or_incomplete_download_is_not_measurement(monkeypatch):
 
 def test_real_timeout_reaps_child(monkeypatch,tmp_path):
     # Execute a LOCAL Python child in place of ssh; no network/model/provider.
-    import os,sys
+    import os
+    import sys
     pidfile=tmp_path/'pid'
     remote=Remote()
     remote._base=lambda:[sys.executable,'-c',f'import os,time;open({str(pidfile)!r},"w").write(str(os.getpid()));time.sleep(30)']

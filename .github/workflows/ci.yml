@@ -20,7 +20,10 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
       - run: uv sync --locked --extra test
+      - run: uv run ruff check gipper tests scripts
       - run: uv run --extra test pytest -q
+      - run: uv run --group site python scripts/build_site.py
+      - run: git diff --exit-code -- docs
       - run: uv build
       - run: uv run --no-project scripts/check_dist.py
       - name: Install wheel outside the source checkout

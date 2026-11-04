@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="dark light"><title>Security — gipper</title>
+<meta name="description" content="Security: documentation for the gipper GPU job runner.">
+<link rel="canonical" href="https://lavallee.github.io/gipper/guides/security.html">
+<link rel="stylesheet" href="../style.css"><link rel="icon" href="../favicon.svg" type="image/svg+xml"></head>
+<body><a class="skip" href="#main">Skip to content</a><header class="site-header wrap"><a class="wordmark" href="../index.html">gipper <span>v0.3.0</span></a><nav aria-label="Documentation"><a href="quickstart.html">Quickstart</a><a href="clients.html">Python API</a><a href="https://github.com/lavallee/gipper">GitHub</a></nav></header>
+<main class="guide wrap" id="main"><a class="back" href="../index.html">gipper documentation</a><h1>Security</h1>
+<p>Only the latest release receives fixes. This is alpha software controlling paid
+infrastructure; use provider spending alerts and inspect the provider console
+when cleanup is uncertain.</p>
+<h2>Reporting a vulnerability</h2>
+<p>Use <a href="https://github.com/lavallee/gipper/security/advisories/new">GitHub private vulnerability reporting</a>
+if enabled. If unavailable, open an issue requesting a private contact without
+including exploit details, keys, account identifiers, or private data. Private
+reporting must be enabled by the maintainer before the public launch. There is
+no promised response time.</p>
+<h2>Trust boundaries</h2>
+<ul>
+<li>A job TOML is executable code. Its setup and command run on a rented machine;
+its input/output paths select local data to upload or overwrite. Review jobs
+before running them. Do not run gipper as local root.</li>
+<li>Providers and host operators can access uploaded data and job output. SSH
+currently disables host-key verification for ephemeral endpoints; it does not
+authenticate the remote host independently of the provider's endpoint data.
+Output archives come from that trusted host and are extracted locally with
+system <code>tar</code>. Use a dedicated local account or container for untrusted work.</li>
+<li>The remote bootstrap downloads and runs the uv installer from astral.sh if uv
+is absent. Provider images and job dependencies are additional supply-chain
+trust decisions. Pin your job image and dependencies where reproducibility
+matters. <code>bin/runpod-mcp</code> is an optional developer helper that executes the
+latest third-party MCP server via npx; it is not installed by the package.</li>
+<li>Provider keys stay local and are sent in API headers. Use environment variables
+or a mode-600 dotenv file. Known provider key values are redacted from API
+errors and receipts, but arbitrary secrets printed by jobs are not detected.
+The <code>[env]</code> name check is a guard, not a general secret detector.</li>
+<li>Receipts include paths, provider resource identifiers, host addresses, and
+commands; logs and collected files can contain sensitive job data. Restrict
+filesystem permissions and review everything before sharing it.</li>
+<li>Cleanup uses provider APIs. A killed client, offline user manager, unavailable
+API, or failed reaper can leave a machine billing. Remote <code>timeout</code> ends the
+command, not the rental. Check the provider console if closure is unconfirmed.
+Budget estimates/caps are client-side safeguards, not provider-enforced limits.</li>
+<li>The reaper manages all resources named <code>gipper-*</code> in each configured account,
+including ones not in its local ledger. Reserve that namespace and coordinate
+multiple clients/accounts; use a dedicated provider account when appropriate.</li>
+</ul>
+</main>
+<footer class="wrap footer"><span>gipper v0.3.0 · MIT</span><a href="https://github.com/lavallee/gipper/issues">Report a documentation issue</a></footer></body></html>

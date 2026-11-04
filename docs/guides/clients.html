@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="dark light"><title>Driving gipper from another repo — gipper</title>
+<meta name="description" content="Driving gipper from another repo: documentation for the gipper GPU job runner.">
+<link rel="canonical" href="https://lavallee.github.io/gipper/guides/clients.html">
+<link rel="stylesheet" href="../style.css"><link rel="icon" href="../favicon.svg" type="image/svg+xml"></head>
+<body><a class="skip" href="#main">Skip to content</a><header class="site-header wrap"><a class="wordmark" href="../index.html">gipper <span>v0.3.0</span></a><nav aria-label="Documentation"><a href="quickstart.html">Quickstart</a><a href="clients.html">Python API</a><a href="https://github.com/lavallee/gipper">GitHub</a></nav></header>
+<main class="guide wrap" id="main"><a class="back" href="../index.html">gipper documentation</a><h1>Driving gipper from another repo</h1>
+<h2>Writing a job that runs on any provider</h2>
+<ul>
+<li><strong>Paths:</strong> use paths relative to the job directory. The job runs in
+<code>~/job</code> on the machine, which is <code>/root/job</code> in containers (Runpod, Vast) and
+<code>/home/shadeform/job</code> on Shadeform. Don't hardcode <code>/root</code> or <code>/workspace</code>;
+<code>/workspace</code> exists only with a Runpod network volume.</li>
+<li><strong>GPU names:</strong> plain names in <code>prefer</code> (&quot;RTX 4090&quot;, &quot;A40&quot;) match every
+provider's spelling. Variants are separate cards: &quot;RTX 4090&quot; does not match
+&quot;RTX 4090D&quot;.</li>
+<li><strong>Runpod-only fields:</strong> <code>[gpu] cloud</code> only affects Runpod, and <code>[pod] volume</code>
+pins a job to Runpod.</li>
+<li><strong>CUDA and the driver:</strong> hosts vary. On Vast a 535 driver showed up in Quebec,
+and some images carry CUDA forward-compat libraries that break <code>cuInit</code> (error
+804). gipper checks <code>cuInit</code> on every host and works around 804. If the job
+needs a specific runtime, set <code>[placement] min_cuda</code> (filters Vast offers and
+becomes Runpod's <code>allowedCudaVersions</code>) and <code>min_compute_capability</code> (checked
+on the machine). Install torch from <code>$GIPPER_TORCH_INDEX</code>.</li>
+<li><strong>UDP:</strong> <code>[pod] ports = [&quot;5004/udp&quot;]</code>, then advertise
+<code>$GIPPER_PUBLIC_IP:$GIPPER_PORT_5004_UDP</code>. The outside port is not 5004 on Vast.</li>
+<li><strong>Telling gipper about the job:</strong> <code>[placement] compute_s</code>, <code>setup_download_gb</code>
+and <code>download_gb</code> make the first estimates honest; after a few runs, memory
+takes over for compute time. Give runs of the same work the same <code>workload</code> so
+they share that memory.</li>
+</ul>
+<h2>The Python surface</h2>
+<p>These names are stable within 0.x:</p>
+<table>
+<thead>
+<tr>
+<th>Name</th>
+<th>What</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>gipper.job.load(path)</code></td>
+<td>a <code>Job</code></td>
+</tr>
+<tr>
+<td><code>gipper.run.plan(job, provider=, gpu=, throughput=)</code></td>
+<td><code>(offers, hourly ceiling, notes)</code>; each offer carries <code>.estimate</code></td>
+</tr>
+<tr>
+<td><code>gipper.run.run(job, provider=, dry_run=, log_dir=, gpu_override=, throughput=)</code></td>
+<td><code>(run_id, outcome)</code>: <code>succeeded</code>, <code>failed</code>, <code>timeout</code>, <code>capped</code>, <code>interrupted</code>, <code>error</code>, <code>termination_pending</code></td>
+</tr>
+<tr>
+<td><code>gipper.run.estimate(job, offer=o)</code></td>
+<td>the whole-run estimate for one offer</td>
+</tr>
+<tr>
+<td><code>gipper.run.preflight(remote)</code></td>
+<td>GPU idle check; wrap it to add your own. Raise <code>gipper.run.Unsuitable</code> when the host works but doesn't suit the job (wrong architecture for a pinned runtime), and <code>gipper.run.BadHost</code> when it's broken. Both replace the host; only <code>BadHost</code> counts against it in memory</td>
+</tr>
+<tr>
+<td><code>gipper.run.settings</code></td>
+<td>looked up at call time, so a wrapper can change caps for one run</td>
+</tr>
+<tr>
+<td><code>gipper.providers.load(name)</code></td>
+<td><code>.offers(job)</code>, <code>.list_ours()</code>, <code>.get(id)</code> (Vast), <code>.terminate(id)</code>, <code>.account()</code>, <code>.billed(since)</code></td>
+</tr>
+<tr>
+<td><code>gipper.providers.runpod.Runpod().api()</code></td>
+<td>the raw Runpod client</td>
+</tr>
+<tr>
+<td><code>gipper.ledger.read(since=, kinds=, job=)</code> / <code>.write(kind, payload, job=)</code></td>
+<td>receipts</td>
+</tr>
+<tr>
+<td><code>gipper.history.History.load()</code></td>
+<td>memory: <code>.failure(p, machine)</code>, <code>.ready_s</code>, <code>.mbps</code>, <code>.compute_s(workload, gpu)</code>, <code>.billing_factor(p)</code></td>
+</tr>
+<tr>
+<td><code>gipper.ssh.Remote(host, port, user)</code></td>
+<td><code>.run</code>, <code>.put</code>, <code>.get</code> over gipper's key</td>
+</tr>
+</tbody>
+</table>
+<p>Kept for scripts written before 0.2: <code>gipper.runpod.api.Api</code> and
+<code>gipper.runpod.run._wait_ready</code>. Any other <code>gipper.runpod.run</code> name raises an
+error pointing at <code>gipper.run</code>, so a script that patches the old <code>pick_gpu</code> fails
+instead of silently patching nothing.</p>
+<h2>Receipts a guard can rely on</h2>
+<ul>
+<li><code>pod.create</code>: <code>provider</code>, <code>pod</code>, <code>machine</code>, <code>country</code>, <code>gpu</code>, <code>usd_per_h</code>, <code>deadline</code></li>
+<li><code>host.rtt</code>: round trip from <code>origin</code> (this machine's hostname) to the rented machine</li>
+<li><code>pod.closure_verified</code>: the provider no longer lists the machine. Until it
+appears there may be a <code>pod.termination_pending</code>; treat that machine as still
+billing.</li>
+<li><code>spend</code> (computed at teardown) and <code>spend.billed</code> (the provider's bill, from
+<code>reconcile</code>; the latest one per machine counts). <code>gipper.billing.spend_since(t)</code>
+combines them by machine.</li>
+<li>Receipts without <code>provider</code> predate 2026-10-26 and are Runpod's.</li>
+</ul>
+<p>An editable install imports code directly from its checkout. Use an isolated
+worktree for changes if clients are using that checkout; see <a href="https://github.com/lavallee/gipper/blob/main/AGENTS.md">AGENTS.md</a>.</p>
+</main>
+<footer class="wrap footer"><span>gipper v0.3.0 · MIT</span><a href="https://github.com/lavallee/gipper/issues">Report a documentation issue</a></footer></body></html>

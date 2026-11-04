@@ -6,3 +6,5 @@ recursive-include tests *.py
 recursive-include scripts *.py
 prune plans
 exclude CLAUDE.md
+include artifact.toml
+recursive-include site *.html *.css *.svg

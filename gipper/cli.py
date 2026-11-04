@@ -140,7 +140,8 @@ def _pod(args):
         # a job belongs to the day it started; its bill may be recorded days later
         per = defaultdict(lambda: {"computed": 0.0, "billed": {}, "s": 0, "name": "", "outcome": "", "first": None})
         for r in ledger.read(kinds={"pod.create", "spend", "spend.billed", "run.end"}):
-            j = per[r["job"]]
+            # some spend (e.g. a lease run outside `pod run`) is written without a job id
+            j = per[r["job"] or f"(no job) {r['refs'].get('name', '')}".strip()]
             j["first"] = j["first"] or r["ts"]
             if r["kind"] == "pod.create":
                 continue

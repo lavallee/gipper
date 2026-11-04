@@ -29,7 +29,8 @@ def test_reconcile_records_only_our_machines_once():
 
 def test_a_late_bill_counts_toward_its_machines_day_not_todays():
     from conftest import receipt
-    import json, time
+    import json
+    import time
     from gipper.config import DATA
     old = [receipt("pod.create", {"provider": "vast", "pod": "9"}, ts="2026-10-20T10:00:00+00:00"),
            receipt("spend", {"provider": "vast", "pod": "9", "usd": 1.0}, ts="2026-10-20T11:00:00+00:00")]
@@ -43,7 +44,8 @@ def test_a_late_bill_counts_toward_its_machines_day_not_todays():
 
 def test_a_run_across_midnight_counts_on_the_day_it_ended():
     from conftest import receipt
-    import json, time
+    import json
+    import time
     from gipper.config import DATA
     now = time.time()
     iso = lambda t: time.strftime("%Y-%m-%dT%H:%M:%S+00:00", time.gmtime(t))
@@ -68,3 +70,16 @@ def test_bills_only_grow_and_one_provider_failing_doesnt_stop_another():
     assert spend_since(0) == 0.05
     reconcile(providers=[Billed({"1": (0.02, {})})])           # a clipped window: smaller, ignored
     assert spend_since(0) == 0.05
+
+
+def test_cost_report_survives_spend_written_without_a_job(capsys):
+    """A spend receipt with job=None (a lease run outside `pod run`) crashed `gipper pod cost`
+    with a format error and hid every row after it."""
+    from gipper import cli, ledger
+    ledger.write("pod.create", {"provider": "runpod", "pod": "1"}, job="j")
+    ledger.write("spend", {"provider": "runpod", "pod": "1", "usd": 0.5, "seconds": 600}, job="j", refs={"name": "named"})
+    ledger.write("spend", {"provider": "runpod", "pod": "2", "usd": 1.25, "seconds": 3600}, refs={"name": "phone-lease"})
+    cli.main(["pod", "cost"])
+    out = capsys.readouterr().out
+    assert "(no job) phone-lease" in out
+    assert "total computed $1.750" in out

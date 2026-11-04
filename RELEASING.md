@@ -1,7 +1,7 @@
 # Releasing gipper
 
-Releases are built and published manually; pushing a commit does not publish a
-package. Keep the CLI, Python API, documentation, and distribution metadata in
+GitHub releases trigger the trusted PyPI publisher in `publish.yml`; pushing a
+commit alone does not publish a package. Keep the CLI, Python API, documentation, and distribution metadata in
 sync for each release.
 
 ## Public release checks
@@ -23,7 +23,10 @@ sync for each release.
 
 ```sh
 uv sync --locked --extra test
+uv run ruff check gipper tests scripts
 uv run --extra test pytest -q
+artoo build .
+artoo verify .
 uv build
 uv run --no-project scripts/check_dist.py
 gitleaks dir --redact --no-banner .
@@ -33,8 +36,7 @@ gitleaks git --redact --no-banner --log-opts=--all .
 Run tree scans on a clean export so caches and installed dependencies are not
 mistaken for release content. Do not globally ignore the generic API key rule
 because of the known test fixture. CI has no provider keys and never rents.
-Review CI on Python 3.12–3.14 and the installed-wheel smoke check. The repository
-has no lint baseline; lint adoption is a separate change.
+Review CI on Python 3.12–3.14 and the installed-wheel smoke check. Ruff checks correctness and import errors without imposing a formatting rewrite.
 
 If provider behavior changed, obtain authorization for a bounded real smoke run,
 review estimate/dry-run first, then verify closure in both CLI and provider
@@ -50,9 +52,16 @@ console. A unit-test pass does not qualify a provider's live behavior.
 3. Commit the scoped release, tag it `vX.Y.Z`, and push the reviewed commit and tag.
 4. Create a GitHub release with focused changes, validation, limitations, and the
    wheel/sdist attached. Confirm uploaded assets match local checksums.
-5. If the PyPI name belongs to this project and a package-index release is planned,
-   publish the reviewed artifacts with `uv publish`. Verify index metadata and
-   a fresh installation before advertising `pip install gipper`.
+5. The release triggers `publish.yml` in GitHub environment `pypi`. Register its
+   trusted publisher on PyPI (owner `lavallee`, repo `gipper`, workflow
+   `publish.yml`, environment `pypi`) before the first release. The workflow
+   verifies the tag/version, runs lint/tests, builds, checks, and publishes the
+   artifacts with OIDC; no long-lived PyPI token is stored. Verify index metadata
+   and a fresh installation before advertising `pip install gipper`.
 
-No site deployment is needed for this release. If a website is added later,
-publish through a repository Artoo artifact and `artoo deploy`.
+The documentation site is owned by the root `artifact.toml`. Edit its source
+under `site/` and `docs/*.md`, then `artoo build . && artoo verify .`. Publish
+through `artoo deploy .`; it commits the in-place `docs/` tree but does not push.
+Review and push that commit with the release. Pages serves `main` / `docs`.
+Update the homepage URL, GitHub topics, and public project-directory entries
+when capabilities or installation instructions change.

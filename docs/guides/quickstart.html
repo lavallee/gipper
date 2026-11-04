@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="dark light"><title>Run your first GPU job — gipper</title>
+<meta name="description" content="Run your first GPU job: documentation for the gipper GPU job runner.">
+<link rel="canonical" href="https://lavallee.github.io/gipper/guides/quickstart.html">
+<link rel="stylesheet" href="../style.css"><link rel="icon" href="../favicon.svg" type="image/svg+xml"></head>
+<body><a class="skip" href="#main">Skip to content</a><header class="site-header wrap"><a class="wordmark" href="../index.html">gipper <span>v0.3.0</span></a><nav aria-label="Documentation"><a href="quickstart.html">Quickstart</a><a href="clients.html">Python API</a><a href="https://github.com/lavallee/gipper">GitHub</a></nav></header>
+<main class="guide wrap" id="main"><a class="back" href="../index.html">gipper documentation</a><h1>Run your first GPU job</h1>
+<p>Gipper needs a Linux client, Python 3.12+, OpenSSH, and tar with gzip support.
+Provider accounts supply the GPUs; a missing API key disables that provider for
+rentals. Your application and dependencies remain part of your job.</p>
+<h2>Install from source</h2>
+<pre><code class="language-sh">git clone https://github.com/lavallee/gipper.git
+cd gipper
+uv tool install .
+gipper --help
+</code></pre>
+<p>Alternatively, use <code>pip install .</code> in a virtual environment. Install uv separately
+if using the uv commands. The Python runtime has no third-party dependencies.</p>
+<h2>Configure a provider</h2>
+<pre><code class="language-sh">mkdir -p ~/.config/gipper
+(umask 077; cp -n .env.example ~/.config/gipper/.env)
+chmod 600 ~/.config/gipper/.env
+</code></pre>
+<p>Edit that file to set <code>VAST_API_KEY</code> or <code>RUNPOD_API_KEY</code>. Environment variables
+override dotenv values. An explicit <code>GIPPER_ENV</code> selects a different file.
+Never put API keys in a job, shell command argument, or issue report.
+Shadeform is experimental and has not had live qualification.</p>
+<h2>Inspect before renting</h2>
+<pre><code class="language-sh">gipper pod estimate examples/smoke.toml --provider vast
+gipper pod run examples/smoke.toml --provider vast --dry-run
+</code></pre>
+<p>These commands contact provider APIs but do not rent. Read the estimated phases,
+fees, and assumptions. The smoke job requests at least 16 GB of GPU memory and
+limits estimated spend to $0.10 and runtime to 15 minutes. Those are client-side
+safeguards; provider rounding or failed cleanup can make the bill larger.</p>
+<h2>Run and verify closure</h2>
+<p>The next command spends money. Run it only when you intend to rent:</p>
+<pre><code class="language-sh">gipper pod run examples/smoke.toml --provider vast
+gipper pod ls
+</code></pre>
+<p>The example uploads a text file, runs <code>nvidia-smi</code>, and collects results in
+<code>examples/smoke-out/</code>. It checks the transfer and lifecycle, not GPU performance.
+Check the provider console if a machine remains listed or closure is uncertain.</p>
+<h2>Keep cleanup available</h2>
+<pre><code class="language-sh">mkdir -p ~/.config/systemd/user
+cp deploy/gipper-reap.* ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now gipper-reap.timer
+</code></pre>
+<p>The service expects <code>~/.local/bin/gipper</code>; adjust it if your installation lives
+elsewhere. Keep provider credentials in the user-config dotenv so the service
+can read them. Timers need a running user manager; user lingering or another
+independent scheduler is needed to cover logout. A remote command timeout does
+not terminate the rental.</p>
+<h2>Bring your own workload</h2>
+<p>Copy the smoke job and change <code>[run] command</code>, <code>[run] setup</code>, <code>[[inputs]]</code>, and
+<code>[[outputs]]</code>. Set GPU requirements, budgets, and placement hints for your
+training, inference, renderer, or other shell-driven application. Use relative
+input paths so jobs remain portable. Repeated comparable jobs should share a
+<code>workload</code> name; use a separate name or explicit estimates when work changes.</p>
+<p>See <a href="placement.html">placement</a>, the <a href="clients.html">Python API</a>, and the
+<a href="security.html">security model</a> before running sensitive or long-lived work.</p>
+</main>
+<footer class="wrap footer"><span>gipper v0.3.0 · MIT</span><a href="https://github.com/lavallee/gipper/issues">Report a documentation issue</a></footer></body></html>

@@ -1,5 +1,7 @@
 # gipper
 
+[Website](https://lavallee.github.io/gipper/) · [Quickstart](https://lavallee.github.io/gipper/guides/quickstart.html) · [Python API](https://lavallee.github.io/gipper/guides/clients.html)
+
 gipper runs jobs on rented NVIDIA GPUs. Describe the hardware, command, input
 files, outputs, and budget in a TOML file; gipper compares cloud offers, rents a
 machine, checks it, runs the job, collects results, and verifies teardown.
@@ -13,7 +15,7 @@ fees, and host failures. An append-only local ledger records runs and costs;
 future estimates learn from **your own** workloads and provider history. A fresh
 installation starts with stated defaults, not someone else's rental history.
 
-**Status: 0.2.2, alpha.** Linux client, CLI and Python API, no daemon. Runpod and
+**Status: 0.3.0, alpha.** Linux client, CLI and Python API, no daemon. Runpod and
 Vast have live-run validation; Shadeform is experimental and has not had a live
 smoke test. See the [roadmap](ROADMAP.md) for planned features and
 [SECURITY.md](SECURITY.md) for trust and billing limits. Licensed under [MIT](LICENSE).

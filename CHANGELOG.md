@@ -1,8 +1,11 @@
 # Changelog
 
-## Unreleased
+## 0.3.0 (2026-11-04)
 
 ### Added
+
+- Public documentation site, GitHub Pages deployment through Artoo, correctness
+  lint checks, and a trusted-publishing workflow for PyPI.
 
 - MIT license, public installation/contribution/security guidance, release checklist,
   package metadata, and Linux CI for Python 3.12–3.14 with distribution checks.
@@ -16,6 +19,11 @@
   and operational guidance based on each installation's own history.
 - Replace internal planning with a public roadmap and full third-party research
   captures with source references. Document billing and host-trust limitations.
+
+### Fixed
+
+- Cost reports include spend receipts without a job ID instead of crashing and
+  hiding later rows.
 
 ## 0.2.2 (2026-10-28)
 

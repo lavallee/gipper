@@ -1,0 +1,242 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="dark light"><title>How gipper chooses an offer — gipper</title>
+<meta name="description" content="How gipper chooses an offer: documentation for the gipper GPU job runner.">
+<link rel="canonical" href="https://lavallee.github.io/gipper/guides/placement.html">
+<link rel="stylesheet" href="../style.css"><link rel="icon" href="../favicon.svg" type="image/svg+xml"></head>
+<body><a class="skip" href="#main">Skip to content</a><header class="site-header wrap"><a class="wordmark" href="../index.html">gipper <span>v0.3.0</span></a><nav aria-label="Documentation"><a href="quickstart.html">Quickstart</a><a href="clients.html">Python API</a><a href="https://github.com/lavallee/gipper">GitHub</a></nav></header>
+<main class="guide wrap" id="main"><a class="back" href="../index.html">gipper documentation</a><h1>How gipper chooses an offer</h1>
+<p>Code: <a href="https://github.com/lavallee/gipper/blob/main/gipper/costs.py"><code>gipper/costs.py</code></a> (the estimate and score),
+<a href="https://github.com/lavallee/gipper/blob/main/gipper/history.py"><code>gipper/history.py</code></a> (memory), <a href="https://github.com/lavallee/gipper/blob/main/gipper/market.py"><code>gipper/market.py</code></a>
+(filters and order), <a href="https://github.com/lavallee/gipper/blob/main/gipper/placement.py"><code>gipper/placement.py</code></a> (the job's hints).</p>
+<h2>The order</h2>
+<ol>
+<li><strong>Filters.</strong> Enough GPU memory; inside <code>[gpu] regions</code>; UDP if a port asks
+for it; at or under <code>max_usd_per_h</code>; expected cost within <code>[budget] max_usd</code>;
+and any <code>[placement]</code> floor the provider advertises
+(<code>min_host_download_mbps</code>, <code>min_host_upload_mbps</code>, <code>min_cuda</code>,
+<code>min_compute_capability</code>). A floor the provider doesn't advertise passes
+the filter and is checked on the machine itself. Runpod doesn't advertise
+compute capability, so a Runpod GPU below <code>min_compute_capability</code> is rented
+and then rejected; use <code>prefer</code> or <code>providers</code> to avoid that.</li>
+<li><strong><code>prefer</code></strong>, in the job's order. GPUs it doesn't list come after all the
+ones it does.</li>
+<li><strong>Known stock first.</strong> Runpod GPU types without reported stock mostly fail to
+rent; Vast and Shadeform offers are specific machines, always in stock.</li>
+<li><strong>Score</strong>, lowest first.</li>
+<li>The provider order in settings, as a tie-break.</li>
+</ol>
+<h2>The estimate</h2>
+<pre><code>wall     = ready + setup + upload + fetch + compute + download
+expected = (wall x $/h + bandwidth fees) x billing factor
+risk     = p_fail x (failure_cost_usd + (ready + 60 s) x ($/h + hour value))
+score    = expected + risk + hour value x wall
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Figure</th>
+<th>First choice</th>
+<th>Then</th>
+<th>Then</th>
+<th>Default</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>ready</td>
+<td>memory: median for this machine</td>
+<td>median for the provider</td>
+<td></td>
+<td>Runpod 90 s, Vast 120 s, Shadeform 420 s</td>
+</tr>
+<tr>
+<td>setup</td>
+<td><code>placement.setup_s</code></td>
+<td></td>
+<td></td>
+<td>120 s</td>
+</tr>
+<tr>
+<td>upload</td>
+<td><code>placement.upload_gb</code> (else the size of <code>[[inputs]]</code>) over the measured link to this machine</td>
+<td>to the provider</td>
+<td>advertised host download × <code>transfer_efficiency</code></td>
+<td>100 Mb/s × efficiency</td>
+</tr>
+<tr>
+<td>fetch</td>
+<td><code>placement.setup_download_gb</code> over the advertised host download × efficiency</td>
+<td></td>
+<td></td>
+<td>100 Mb/s × efficiency</td>
+</tr>
+<tr>
+<td>compute</td>
+<td><code>compute_s_by_gpu</code> for this GPU</td>
+<td><code>--throughput</code> with <code>units.count</code></td>
+<td><code>placement.compute_s</code></td>
+<td>memory: median for this workload on this GPU, else 30 min (capped at <code>max_hours</code>)</td>
+</tr>
+<tr>
+<td>download</td>
+<td><code>placement.download_gb</code> over the measured link back</td>
+<td></td>
+<td>advertised host upload × efficiency</td>
+<td>100 Mb/s × efficiency</td>
+</tr>
+<tr>
+<td>bandwidth</td>
+<td>Vast's advertised $/GB in and out</td>
+<td></td>
+<td></td>
+<td>Runpod: none charged. Vast without advertised fees: 0, flagged <code>bandwidth_known: false</code></td>
+</tr>
+<tr>
+<td>billing factor</td>
+<td>memory: billed ÷ computed for the provider, totals over rentals of 10 minutes or more (shorter ones mostly measure rounding)</td>
+<td></td>
+<td></td>
+<td>1.0</td>
+</tr>
+<tr>
+<td>p_fail</td>
+<td>the machine's record, weighted 2 rentals towards the provider's rate</td>
+<td>the provider's record, weighted 4 rentals towards 10%</td>
+<td></td>
+<td>10%</td>
+</tr>
+</tbody>
+</table>
+<p>&quot;Measured&quot; links come only from timed real transfers of 20 MB or more (inputs
+going up, outputs coming down when the job doesn't checkpoint them). The optional
+probe never counts: a 2 MiB probe mostly measures ssh start-up, so it reads low.</p>
+<p><code>gipper pod estimate JOB</code> prints the phases, the dollars, the risk and, under
+&quot;from&quot;, where each figure came from. The <code>estimate</code> receipt records all of it.</p>
+<h2>Objectives</h2>
+<table>
+<thead>
+<tr>
+<th><code>placement.objective</code></th>
+<th>Hour of waiting worth</th>
+<th>Use for</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>auto</code> (default)</td>
+<td><code>hour_value_usd</code>, $3</td>
+<td>most work</td>
+</tr>
+<tr>
+<td><code>cost</code></td>
+<td>$0 (failures still cost)</td>
+<td>batch work nobody is waiting on</td>
+</tr>
+<tr>
+<td><code>time</code></td>
+<td>$50</td>
+<td>someone is waiting</td>
+</tr>
+<tr>
+<td><code>latency</code> (with <code>profile = &quot;interactive&quot;</code>)</td>
+<td>$3, after nearness</td>
+<td>real-time work: see below</td>
+</tr>
+</tbody>
+</table>
+<h2>Real-time work</h2>
+<pre><code class="language-toml">[placement]
+profile = &quot;interactive&quot;                         # objective defaults to &quot;latency&quot;
+latency_target = &quot;interactive-client&quot;          # where the RTTs below were measured from
+measured_rtt_ms_by_machine = { &quot;vast:machine:12345&quot; = 28 }
+max_rtt_ms = 50                                 # unmeasured offers fail this
+preferred_countries = [&quot;CA&quot;, &quot;US&quot;]
+near_latitude = 43.65                           # with max_distance_km: offers without
+near_longitude = -79.38                         # coordinates fail it
+max_distance_km = 1500
+</code></pre>
+<p>After <code>prefer</code> and stock, offers rank by the best round-trip figure there is
+(offers with one first, lowest first), then by position in
+<code>preferred_countries</code>, then by distance, then by the usual score. The figure
+comes from, in order of trust:</p>
+<ol>
+<li>the job's own <code>measured_rtt_ms_by_machine</code>, measured from <code>latency_target</code>;</li>
+<li>a ping from this machine just before renting (<code>probe_rtt</code>, on by default for
+interactive jobs; up to the 48 cheapest hosts; hosts that do not answer
+have no probe measurement);</li>
+<li>memory of that machine's round trip from here (<code>host.rtt</code> on every rental,
+<code>market.rtt</code> from earlier pings);</li>
+<li>the median round trip from here to hosts in its country.</li>
+</ol>
+<p>Only 1 counts as measured for <code>max_rtt_ms</code>, unless <code>latency_target = &quot;here&quot;</code>
+(the user is at this machine), when 2 counts too. Otherwise 2–4 are proxies:
+they rank offers but can't pass the limit.</p>
+<p>Country is the roughest proxy. Provider labels may be inaccurate and are not a
+substitute for measurements from the client that needs low latency. Vast does
+not expose coordinates through this adapter, so a <code>max_distance_km</code> limit
+currently leaves no Vast offers.</p>
+<p>Batch jobs (any objective but <code>latency</code>) ignore all of this. A cheap host on the
+other side of the world wins whenever the whole run costs less; its slower
+transfers are priced from link-speed memory, which is kept per country.</p>
+<h2>Other fields</h2>
+<ul>
+<li><code>min_dlperf</code>: a floor on Vast's DLPerf, a generic provider score. It filters
+offers; it is never read as this workload's speed.</li>
+<li><code>client_upload_mbps</code> / <code>client_download_mbps</code>: caps on this end's link, for
+when it's slower than the host's.</li>
+<li><code>fallback_mbps</code> (100): the link speed when nothing is advertised or measured.</li>
+</ul>
+<p>Every estimate also carries the field names 0.1's placement used
+(<code>estimated_total_usd</code>, <code>bandwidth_fees_known</code>, <code>cost_is_lower_bound</code>,
+<code>setup_download_s</code>, <code>assumptions</code>, ...), so reports reading estimate receipts
+or <code>offer.placement_estimate</code> keep working.</p>
+<p>Settings live in <code>~/.config/gipper/config.toml</code>: <code>hour_value_usd</code>,
+<code>failure_cost_usd</code> ($1) and <code>history_days</code> (90).</p>
+<h2>How history changes placement</h2>
+<p>Consider two otherwise comparable offers: one has a lower hourly rate, while
+the other has a better host record. On a short job the expected cost of retrying
+a failed host can outweigh the hourly saving. On a long job, the saving accrues
+for more hours and can reverse the ranking.</p>
+<p>This is a consequence of the score, not a fixed preference for a provider.
+A fresh ledger starts both providers with the same 10% failure prior and a 1.0
+billing factor. Your qualifying receipts update those values; the job's
+placement hints and measurements determine the other inputs. Use
+<code>gipper pod estimate</code> to inspect actual candidate scores and their assumptions.</p>
+<h2>Memory</h2>
+<p>The ledger is the memory (<code>~/.local/share/gipper/receipts</code>), read back over
+<code>history_days</code>. <code>gipper pod hosts</code> shows it per provider and per machine. What
+counts:</p>
+<ul>
+<li><strong>good:</strong> <code>run.start</code> on the machine.</li>
+<li><strong>bad:</strong> a broken host: <code>host.reject</code> for a busy GPU, CUDA that won't
+initialise, ssh that never came up, a machine that died while starting, or a
+failed probe; or a connection lost before or during the job.</li>
+<li><strong>neither:</strong> a host that works but doesn't suit the job (<code>run.Unsuitable</code>,
+e.g. compute capability below the floor, or a client's runtime check); an
+error on this side (a local file that won't upload); a job that exits non-zero
+on a working host; a market with no stock. Rejects written before 0.2 have no
+<code>kind</code> and are classified by their message.</li>
+<li><strong>transfer speed:</strong> <code>transfer</code> receipts (bytes and seconds of real uploads and
+downloads).</li>
+<li><strong>compute time:</strong> <code>run.end.compute_s</code> from jobs that succeeded (older receipts:
+run.start → collect). Capped, failed or interrupted runs teach nothing about
+duration.</li>
+<li><strong>billing factor:</strong> <code>spend.billed</code> (from <code>gipper pod reconcile</code>, which the reap
+timer runs) against <code>spend</code>.</li>
+</ul>
+<p>A connection lost mid-run is only noticed when it ends the run; while the log
+poll can't reach the host, gipper keeps waiting until the job's cap.</p>
+<h2>The optional probe</h2>
+<pre><code class="language-toml">[placement]
+probe_transfer_mb = 16          # MiB each way through the job's own ssh, before inputs
+probe_timeout_s = 120           # total, at most 300
+min_measured_upload_mbps = 10   # reject the host below these
+min_measured_download_mbps = 10
+</code></pre>
+<p>It costs the rental time it takes, and a host it rejects is replaced like any
+other bad host. Use it when inputs are large and a slow path would waste the run.
+Its readings gate the host but don't feed memory: the timed real upload does
+that, for free.</p>
+</main>
+<footer class="wrap footer"><span>gipper v0.3.0 · MIT</span><a href="https://github.com/lavallee/gipper/issues">Report a documentation issue</a></footer></body></html>

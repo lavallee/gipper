@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="dark light">
+<title>gipper — GPU jobs across cloud markets</title>
+<meta name="description" content="Run GPU jobs across Runpod and Vast.ai. Compare whole-job costs, collect results, verify teardown, and learn from your own run history. Python, TOML, no runtime dependencies.">
+<meta property="og:title" content="gipper — GPU jobs across cloud markets">
+<meta property="og:description" content="One job file. Whole-run estimates. Results brought home. Teardown verified.">
+<meta property="og:type" content="website"><link rel="canonical" href="https://lavallee.github.io/gipper/">
+<link rel="icon" href="favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="style.css">
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="site-header wrap"><a class="wordmark" href="./">gipper <span>v0.3.0</span></a><nav aria-label="Main"><a href="#how">How it works</a><a href="guides/quickstart.html">Docs</a><a href="https://github.com/lavallee/gipper">GitHub</a></nav></header>
+<main id="main">
+<section class="hero wrap">
+<div><h1>GPU work, from one job file.</h1><p class="lead">Bring your code. Set the hardware and budget. Gipper finds a cloud GPU, runs the job, brings the results home, and checks that the machine is gone.</p><p class="support">For training, batch inference, rendering, and other Linux GPU jobs. CLI or Python. Runpod and Vast.ai. No Python runtime dependencies.</p><div class="actions"><a class="button" href="guides/quickstart.html">Run your first job</a><a href="https://github.com/lavallee/gipper">Read the source</a></div><p class="status">MIT licensed. Python 3.12+. Linux client. Alpha software.</p></div>
+<div class="job-file"><div class="file-heading">job.toml <span>Your workload, your limits</span></div><pre><code>name = "batch-inference"
+workload = "my-model"
+
+[gpu]
+min_mem_gb = 24
+providers = ["vast", "runpod"]
+
+[run]
+setup = "bash project/setup.sh"
+command = "python project/main.py"
+
+[budget]
+max_usd = 2.0
+max_hours = 1.0</code></pre><p>Upload code and collect outputs with <code>[[inputs]]</code> and <code>[[outputs]]</code>. <a href="guides/clients.html">Write a portable job.</a></p></div>
+</section>
+<section class="band" id="how"><div class="wrap"><h2>A rental has an end.</h2><ol class="lifecycle"><li><strong>Estimate</strong><span>Startup, setup, transfer, compute, fees.</span></li><li><strong>Check</strong><span>Rent, connect, verify GPU and CUDA.</span></li><li><strong>Run</strong><span>Execute, checkpoint, collect results.</span></li><li><strong>Close</strong><span>Terminate, verify absence, record spend.</span></li></ol><p>Cleanup runs after success or failure. Unconfirmed closure blocks a replacement; the independent reaper retries. Provider outages and a stopped client can still leave a rental billing. <a href="guides/security.html">Understand the limits.</a></p></div></section>
+<section class="wrap section"><div class="section-intro"><h2>The hourly rate is only part of the price.</h2><p>Cheap hardware can be expensive to start, feed, or retry. Gipper estimates the whole run and shows where each assumption came from.</p></div><dl class="capabilities"><div><dt>Choose for the work</dt><dd>Filter memory, regions, CUDA requirements, and ports. Rank by cost, time, or latency, with your GPU preferences first.</dd></div><div><dt>Learn from your runs</dt><dd>Your local ledger builds compute-time, transfer-speed, billing, and host-reliability history. New installs start from stated defaults.</dd></div><div><dt>Keep the application yours</dt><dd>Install the libraries and models your job needs. Plain shell commands and TOML files work from the CLI or existing Python scripts.</dd></div></dl><a href="guides/placement.html">Read how placement works</a></section>
+<section class="wrap section install" id="install"><div><h2>Start with an estimate.</h2><p>Install from source, add a provider key to your local config, then inspect a bounded smoke job. Estimation and dry runs do not rent a machine.</p><p>Actual runs spend money. Keep the cleanup timer available and check the provider console when closure is uncertain.</p><a href="guides/quickstart.html">Configuration and first run</a></div><pre><code>git clone https://github.com/lavallee/gipper.git
+cd gipper
+uv tool install .
+
+gipper pod estimate examples/smoke.toml \
+  --provider vast
+
+gipper pod run examples/smoke.toml \
+  --provider vast --dry-run</code></pre></section>
+<section class="wrap section reference"><h2>Go further</h2><div><a href="guides/clients.html">Python API and portable jobs</a><a href="guides/placement.html">Placement and estimates</a><a href="guides/lessons.html">Operational notes</a><a href="guides/security.html">Security and host trust</a><a href="https://github.com/lavallee/gipper/blob/main/CONTRIBUTING.md">Contribute</a><a href="https://github.com/lavallee/gipper/releases">Releases</a></div><p>Runpod and Vast.ai have live-run validation. Shadeform is experimental; owned-machine scheduling is planned. Unit tests establish decisions and parsing, not current provider availability.</p></section>
+</main><footer class="wrap footer"><span>gipper v0.3.0 · MIT</span><a href="https://github.com/lavallee/gipper">Source and issues</a></footer>
+</body></html>
