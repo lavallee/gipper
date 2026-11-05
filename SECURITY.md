@@ -31,6 +31,10 @@ no promised response time.
   or a mode-600 dotenv file. Known provider key values are redacted from API
   errors and receipts, but arbitrary secrets printed by jobs are not detected.
   The `[env]` name check is a guard, not a general secret detector.
+- `gipper custody report` lists what reached rented machines, for use after a
+  provider incident. It covers what passed through gipper or was declared; see
+  [docs/custody.md](docs/custody.md) for its limits. Custody manifests hold file
+  paths and hashes, and fingerprints are keyed hashes, never secret values.
 - Receipts include paths, provider resource identifiers, host addresses, and
   commands; logs and collected files can contain sensitive job data. Restrict
   filesystem permissions and review everything before sharing it.

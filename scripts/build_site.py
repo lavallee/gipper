@@ -14,6 +14,7 @@ GUIDES = {
     "quickstart": ROOT / "docs/quickstart.md",
     "clients": ROOT / "docs/clients.md",
     "placement": ROOT / "docs/placement.md",
+    "custody": ROOT / "docs/custody.md",
     "lessons": ROOT / "docs/lessons.md",
     "security": ROOT / "SECURITY.md",
 }

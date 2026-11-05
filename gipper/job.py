@@ -43,6 +43,10 @@ Vast and Shadeform now; owned machines planned).
     max_usd = 1.0
     max_hours = 2.0
 
+    [custody]                              # optional: what to do about sensitive-looking uploads
+    on_sensitive = "refuse"                # default "warn": recorded either way
+    allow = ["fixtures/*.pem"]             # reviewed false positives; a known secret is still refused
+
     [placement]                            # optional: how to judge offers on the whole run
     compute_s = 900                        # (all fields in gipper/placement.py)
     setup_download_gb = 5
@@ -94,6 +98,7 @@ class Job:
     max_hours: float = 3.0
     path: Path | None = None
     placement: Placement = field(default_factory=Placement)
+    custody: dict = field(default_factory=dict)
 
 
 def load(path):
@@ -138,7 +143,11 @@ def load(path):
         checkpoint_src=ck.get("src"), checkpoint_every_s=int(ck.get("every_s", s["checkpoint_every_s"])),
         max_usd=float(budget.get("max_usd", s["default_job_cap_usd"])),
         max_hours=float(budget.get("max_hours", s["default_max_hours"])), path=path,
-        placement=load_placement(d.get("placement"), error=JobError))
+        placement=load_placement(d.get("placement"), error=JobError), custody=dict(d.get("custody", {})))
+    if job.custody.get("on_sensitive", "warn") not in ("warn", "refuse"):
+        raise JobError(f"{path.name}: [custody] on_sensitive must be warn or refuse")
+    if set(job.custody) - {"on_sensitive", "allow"}:
+        raise JobError(f"{path.name}: [custody] takes on_sensitive and allow")
     for p in job.ports:
         num, _, proto = p.partition("/")
         if not num.isdigit() or proto.lower() not in ("", "tcp", "udp", "http"):

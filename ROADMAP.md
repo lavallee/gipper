@@ -9,4 +9,7 @@ Potential next steps, without delivery commitments:
 - Coordinate owned GPUs and rented capacity through requests and leases.
 - Add priorities and pre-emption with explicit resource ownership.
 
+- Extend the custody trail to outputs brought back from a machine, and look inside
+  uploaded archives.
+
 These features are not implemented by the current CLI.

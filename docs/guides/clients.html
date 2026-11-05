@@ -4,7 +4,7 @@
 <meta name="description" content="Driving gipper from another repo: documentation for the gipper GPU job runner.">
 <link rel="canonical" href="https://lavallee.github.io/gipper/guides/clients.html">
 <link rel="stylesheet" href="../style.css"><link rel="icon" href="../favicon.svg" type="image/svg+xml"></head>
-<body><a class="skip" href="#main">Skip to content</a><header class="site-header wrap"><a class="wordmark" href="../index.html">gipper <span>v0.3.0</span></a><nav aria-label="Documentation"><a href="quickstart.html">Quickstart</a><a href="clients.html">Python API</a><a href="https://github.com/lavallee/gipper">GitHub</a></nav></header>
+<body><a class="skip" href="#main">Skip to content</a><header class="site-header wrap"><a class="wordmark" href="../index.html">gipper <span>v0.4.0</span></a><nav aria-label="Documentation"><a href="quickstart.html">Quickstart</a><a href="clients.html">Python API</a><a href="https://github.com/lavallee/gipper">GitHub</a></nav></header>
 <main class="guide wrap" id="main"><a class="back" href="../index.html">gipper documentation</a><h1>Driving gipper from another repo</h1>
 <h2>Writing a job that runs on any provider</h2>
 <ul>
@@ -82,7 +82,7 @@ they share that memory.</li>
 </tr>
 <tr>
 <td><code>gipper.ssh.Remote(host, port, user)</code></td>
-<td><code>.run</code>, <code>.put</code>, <code>.get</code> over gipper's key</td>
+<td><code>.run</code>, <code>.put</code>, <code>.put_secrets</code>, <code>.get</code> over gipper's key. <code>.put</code> records a custody manifest first and can raise <code>gipper.custody.Refused</code></td>
 </tr>
 </tbody>
 </table>
@@ -100,9 +100,11 @@ billing.</li>
 <li><code>spend</code> (computed at teardown) and <code>spend.billed</code> (the provider's bill, from
 <code>reconcile</code>; the latest one per machine counts). <code>gipper.billing.spend_since(t)</code>
 combines them by machine.</li>
+<li><code>custody.machine</code>, <code>custody.upload</code>, <code>custody.uploaded</code>, <code>custody.secret</code>,
+<code>custody.note</code>: what reached a machine (<a href="custody.html">custody.md</a>).</li>
 <li>Receipts without <code>provider</code> predate 2026-10-26 and are Runpod's.</li>
 </ul>
 <p>An editable install imports code directly from its checkout. Use an isolated
 worktree for changes if clients are using that checkout; see <a href="https://github.com/lavallee/gipper/blob/main/AGENTS.md">AGENTS.md</a>.</p>
 </main>
-<footer class="wrap footer"><span>gipper v0.3.0 · MIT</span><a href="https://github.com/lavallee/gipper/issues">Report a documentation issue</a></footer></body></html>
+<footer class="wrap footer"><span>gipper v0.4.0 · MIT</span><a href="https://github.com/lavallee/gipper/issues">Report a documentation issue</a></footer></body></html>

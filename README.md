@@ -147,6 +147,18 @@ compute_s = 900
 setup_download_gb = 5                 # weights and wheels the job fetches itself
 ```
 
+## After a provider incident
+
+Every upload is recorded before it leaves: a manifest of what was sent, sensitive-looking
+files flagged, and provider keys refused outright. When a provider reports a problem, one
+command gives you what to rotate, what to review, and what the trail can't vouch for:
+
+```
+gipper custody report --provider runpod --since 2026-10-01 --check-providers
+```
+
+See [docs/custody.md](docs/custody.md), including how to record what went around gipper.
+
 ## How gipper chooses
 
 Every offer is judged on the whole run, not its hourly price

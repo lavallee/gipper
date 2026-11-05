@@ -6,20 +6,19 @@ kind = "reference-guide"
 form = "collection"
 status = "live"
 created = "2026-11-04"
-updated = "2026-11-04"
+updated = "2026-11-05"
 
-# Raw HTML is owned by site/; scripts/build_site.py renders public Markdown guides.
 [build]
-site = "docs"
 commands = ["uv run --group site python scripts/build_site.py"]
+site = "docs"
 
 [deploy]
 target = "github-pages"
 
 [deploy.github-pages]
-mode = "docs"
-docs_dir = "docs"
-subpath = ""
-own_root = true
 commit = true
+docs_dir = "docs"
+mode = "docs"
+own_root = true
 push = false
+subpath = ""

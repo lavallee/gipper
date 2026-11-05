@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.4.0 (2026-11-05)
+
+A forensic trail of what reached each rented machine. When a provider reports an
+incident, `gipper custody report` answers what to rotate and what can't be vouched
+for. See [docs/custody.md](docs/custody.md).
+
+### Added
+
+- **Every `Remote.put`, from jobs and client scripts alike, takes a manifest first**
+  of exactly what tar will send (path, size, sha256, mode), and writes a
+  `custody.upload` receipt before any byte moves. If the manifest can't be taken,
+  the upload doesn't happen.
+- **Uploads are scanned** for sensitive file names and credential patterns. Findings
+  are recorded and printed, never the matched text. Provider keys and values from
+  `custody_secret_files` are always refused. `custody_on_sensitive` or a job's
+  `[custody]` table can refuse other findings, with an `allow` list for reviewed
+  false positives. Jobs are checked before a machine is rented.
+- **`Remote.put_secrets`** places credentials deliberately, as a mode-600 env file
+  sent over stdin, recording names and keyed fingerprints only.
+- **`custody.machine` receipts:** provider, machine, address, image, env names, and
+  hashes of the job file and command.
+- **`gipper custody`:** `report` (rotate list, sensitive uploads, machines, gaps),
+  `show`, `find` (which machines received this file), `check` (was this exact value
+  ever placed on a machine; use it to confirm a rotation), and `declare` (record a
+  scp, a tunnel, or a machine gipper didn't rent).
+- `report --check-providers` compares providers' bills with the ledger, to reveal
+  machines gipper never knew about.
+
 ## 0.3.0 (2026-11-04)
 
 ### Added
