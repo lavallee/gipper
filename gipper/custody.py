@@ -98,16 +98,37 @@ def read_values(path):
     return {k.removeprefix("export ").strip(): v for k, v in config._dotenv(path).items()}
 
 
+SECRET_NAME = re.compile(r"(?i)(KEY|TOKEN|SECRET|PASSWORD|PASSWD|PASSPHRASE|AUTH|CREDENTIAL|PRIVATE|COOKIE|SESSION)")
+
+
+def _secret_sources():
+    """custody_secret_files entries: a path (values whose names look secret), or
+    {path = "...", names = [...]} for exactly those names."""
+    for entry in config.settings().get("custody_secret_files", []):
+        if isinstance(entry, str):
+            yield entry, None
+        elif isinstance(entry, dict) and entry.get("path"):
+            yield entry["path"], set(entry.get("names") or [])
+        else:
+            raise SystemExit(f"custody_secret_files: expected a path or {{path, names}}, got {entry!r}")
+
+
 def known_secrets():
-    """{value: name} for what must never travel: provider keys and custody_secret_files."""
+    """{value: name} for what must never travel: provider keys and custody_secret_files.
+    Only names that look secret count, so a path or URL beside them never blocks an upload."""
     known = {}
     for name in config.KEYS:
         value = config.secret(name, required=False)
         if value:
             known[value] = name
-    for path in config.settings().get("custody_secret_files", []):
-        for name, value in read_values(path).items():
-            if len(value) >= 8:
+    for path, names in _secret_sources():
+        try:
+            values = read_values(path)
+        except FileNotFoundError:
+            print(f"custody: secret file {path} is missing; its values can't be checked", flush=True)
+            continue
+        for name, value in values.items():
+            if len(value) >= 8 and (name in names if names is not None else bool(SECRET_NAME.search(name))):
                 known[value] = name
     return known
 

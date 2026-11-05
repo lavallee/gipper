@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.4.2 (2026-11-05)
+
+### Fixed
+
+- `custody_secret_files` took every value in a file as a secret, so a path or URL
+  kept beside the credentials could block an unrelated upload. Only values whose
+  names look secret count now (KEY, TOKEN, SECRET, PASSWORD, AUTH and similar).
+  An entry can be `{ path = "...", names = [...] }` to choose names exactly. A
+  missing file is reported instead of stopping every upload.
+
 ## 0.4.1 (2026-11-05)
 
 ### Fixed

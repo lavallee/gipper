@@ -102,6 +102,17 @@ def test_configured_secret_files_are_refused_even_if_allowed(tmp_path, monkeypat
     assert why and marked[0]["allowed"]
 
 
+def test_secret_files_count_only_secret_looking_names_or_the_ones_named(tmp_path):
+    env, keys = tmp_path / "app.env", tmp_path / "keys.json"
+    token = "-".join(["tok", "abcdefgh", "123"])   # assembled so secret scanners don't flag the fixture
+    env.write_text(f"SERVICE_TOKEN={token}\nQUEUE_DB=/home/me/queue.sqlite\nPUBLIC_URL=https://example.org/x\n")
+    keys.write_text(json.dumps({"operator": "op-value-1234567", "viewer": "vw-value-1234567", "label": "a public label"}))
+    config.CONFIG_FILE.write_text(f'custody_secret_files = ["{env}", {{ path = "{keys}", names = ["operator", "viewer"] }}, "{tmp_path / 'gone.env'}"]\n')
+    known = custody.known_secrets()
+    assert set(known.values()) >= {"SERVICE_TOKEN", "operator", "viewer"}
+    assert "/home/me/queue.sqlite" not in known and "https://example.org/x" not in known and "a public label" not in known
+
+
 def test_refuse_policy_and_reviewed_allowances(tmp_path):
     finding = [{"path": "fixtures/test.pem", "rule": "sensitive-name"}]
     assert custody.judge(finding, {"on_sensitive": "warn", "allow": []})[1] is None
