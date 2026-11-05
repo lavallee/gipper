@@ -35,6 +35,8 @@ DEFAULTS = {
     "hour_value_usd": 3.0,
     "failure_cost_usd": 1.0,
     "history_days": 90,             # how far back the ledger counts as memory
+    "custody_on_sensitive": "warn", # warn: record and say so; refuse: stop the upload (see docs/custody.md)
+    "custody_secret_files": [],     # env or JSON files whose values must never be uploaded
 }
 
 

@@ -6,7 +6,7 @@ Lifecycle (every step receipted):
   -> rank by whole-run score (gipper.costs, using gipper.history) -> caps
   -> rent the best offer (next one if it's gone) -> wait for ssh -> preflight the GPU
   and CUDA, optionally probe the network (replace a bad host, up to 3)
-  -> upload inputs (timed: memory learns real transfer speeds)
+  -> upload inputs (manifest receipted first; timed: memory learns real transfer speeds)
   -> start the job detached (nohup, under `timeout max_hours`)
   -> stream its log, sync checkpoints, enforce max_usd / max_hours
   -> download outputs -> terminate (in `finally`, whatever happened) -> spend
@@ -21,7 +21,7 @@ import sys
 import time
 from pathlib import Path
 
-from gipper import ledger, market
+from gipper import custody, ledger, market
 from gipper.config import DATA, settings
 from gipper.placement import input_gb
 from gipper.http import ProviderError
@@ -157,6 +157,7 @@ def run(job, *, dry_run=False, log_dir=None, gpu_override=None, provider=None, t
           f"today so far ${spent_today:.2f} of ${s['daily_cap_usd']}")
     if spent_today + min(est["usd"], job.max_usd) > s["daily_cap_usd"]:
         raise SystemExit(f"refusing: today's spend ${spent_today:.2f} + this job would exceed the daily cap ${s['daily_cap_usd']}")
+    custody.check_job(job)  # a refusal shouldn't cost a machine, and a dry run should show it
     if dry_run:
         for o in offers[1:6]:
             e = o.estimate
@@ -187,6 +188,7 @@ def run(job, *, dry_run=False, log_dir=None, gpu_override=None, provider=None, t
             remote, info = None, {}
             try:
                 remote, info = prov.wait_ready(made["id"], job)
+                custody.attach(remote, prov.name, made["id"], run_id, job, offer, info)
                 if not remote.wait(600):
                     raise BadHost("ssh never came up")
                 ledger.write("pod.ready", {"provider": prov.name, "pod": made["id"], "after_s": round(_now() - inst["t"]),

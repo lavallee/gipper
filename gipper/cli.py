@@ -10,6 +10,10 @@
     gipper pod cost [--since YYYY-MM-DD]          spend per job: billed where known, else computed
     gipper pod account                            balance per provider
     gipper ledger [--since YYYY-MM-DD] [--job ID] raw receipts
+    gipper custody report [--provider P] [--since D] [--check-providers]     what reached rented machines
+    gipper custody find FILE|SHA256|PATH-PART     which machines received this
+    gipper custody check ENV_FILE                 was this exact value ever placed on a machine
+    gipper custody declare --provider P --pod ID --secret NAME [...]         record what went around gipper
 
 Providers: runpod, vast, shadeform (keys RUNPOD_API_KEY, VAST_API_KEY,
 SHADEFORM_API_KEY in the environment or ~/.config/gipper/.env). Vast and Shadeform list offers without a key.
@@ -166,6 +170,51 @@ def _pod(args):
         print(f"total computed ${computed:.3f}; billed where known, else computed: ${billed_total:.3f}")
 
 
+def _custody(a):
+    from gipper import custody
+    if a.cmd == "report":
+        rep = custody.report(provider=a.provider, pod=a.pod, machine=a.machine, since=a.since, until=a.until,
+                             check_providers=a.check_providers)
+        if a.json:
+            print(json.dumps(rep, indent=1, default=str))
+        else:
+            custody.show(rep)
+    elif a.cmd == "show":
+        found = [m for m in custody.collect().values() if m["pod"] == a.pod]
+        if not found:
+            raise SystemExit(f"{a.pod}: not in the ledger")
+        for m in found:
+            print(f"{m['provider']}:{m['pod']}  machine {m['machine'] or '?'}  {m['name'] or '?'}")
+            for placed in m["secrets"]:
+                names = ", ".join(s["name"] for s in placed["secrets"])
+                print(f"  secrets  {placed['at']}  {names}  -> {placed.get('path') or '?'}  {placed.get('how') or ''}".rstrip())
+            for u in m["uploads"]:
+                state = "refused" if u.get("refused") else "declared" if u.get("declared") else {True: "sent", False: "failed", None: "outcome unknown"}[u.get("ok")]
+                print(f"  upload   {u['at']}  {u['src']} -> {u['dst']}  [{state}]  manifest {u['manifest']}")
+                flagged = {f["path"]: f["rule"] for f in u.get("findings") or []}
+                for e in custody.load_manifest(u["manifest"])["entries"]:
+                    if e["type"] != "dir":
+                        print(f"    {(e.get('sha256') or '')[:16]:16s} {e['size']:>12d}  {e['path']}" + (f"  !{flagged[e['path']]}" if e["path"] in flagged else ""))
+            for n in m["notes"]:
+                print(f"  note     {n['at']}  {n.get('tunnel') or ''} {n.get('note') or ''}".rstrip())
+    elif a.cmd == "find":
+        hits = custody.find(a.target)
+        for h in hits:
+            print(f"{h['at']}  {h['machine']:32s} {h['path']}  (from {h['src']}; {'sent' if h['arrived'] else 'outcome unknown' if h['arrived'] is None else 'failed'})")
+        print(f"{len(hits)} match(es)")
+    elif a.cmd == "check":
+        rows = custody.check(a.env_file)
+        for r in rows:
+            print(f"{r['name']:28s} " + (f"EXPOSED on {', '.join(r['exposed_on'])}" if r["exposed_on"] else "not seen on any machine"))
+    elif a.cmd == "declare":
+        written = custody.declare(provider=a.provider, pod=a.pod, secrets=a.secret, from_env=a.from_env, path=a.path, files=a.file,
+                                  tunnel=a.tunnel, note=a.note, how=a.how, confidence=a.confidence, machine=a.machine,
+                                  host=a.host, port=a.port, at=a.at)
+        if not written:
+            raise SystemExit("nothing to declare: give --secret, --file, --tunnel or --note")
+        print(f"{len(written)} receipt(s) written for {a.provider}:{a.pod}")
+
+
 def main(argv=None):
     sys.stdout.reconfigure(line_buffering=True)  # live output when redirected to a file
     signal.signal(signal.SIGPIPE, signal.SIG_DFL)  # `gipper pod hosts | head` ends quietly
@@ -201,9 +250,42 @@ def main(argv=None):
     lg = sub.add_parser("ledger", help="raw receipts")
     lg.add_argument("--since")
     lg.add_argument("--job")
+    cu = sub.add_parser("custody", help="what reached rented machines: the incident trail")
+    cs = cu.add_subparsers(dest="cmd", required=True)
+    rp = cs.add_parser("report", help="rotate list, sensitive uploads, machines and gaps")
+    rp.add_argument("--provider", choices=PROVIDERS)
+    rp.add_argument("--pod")
+    rp.add_argument("--machine")
+    rp.add_argument("--since", help="machines in use on or after this date")
+    rp.add_argument("--until", help="machines in use on or before this date")
+    rp.add_argument("--check-providers", action="store_true", help="also ask providers' bills for machines the ledger doesn't know (read-only)")
+    rp.add_argument("--json", action="store_true")
+    sh = cs.add_parser("show", help="every file sent to one machine")
+    sh.add_argument("pod")
+    fd = cs.add_parser("find", help="which machines received a file")
+    fd.add_argument("target", help="local file, sha256, or part of a path")
+    ck = cs.add_parser("check", help="has each value in this file been placed on a machine (values are not shown)")
+    ck.add_argument("env_file")
+    dc = cs.add_parser("declare", help="record what reached a machine outside gipper: scp, a tunnel, a machine it didn't rent")
+    dc.add_argument("--provider", required=True)
+    dc.add_argument("--pod", required=True)
+    dc.add_argument("--machine")
+    dc.add_argument("--host")
+    dc.add_argument("--port", type=int)
+    dc.add_argument("--secret", action="append", default=[], help="credential name, repeatable")
+    dc.add_argument("--from-env", help="read those names' values from this file, to fingerprint them")
+    dc.add_argument("--path", help="where it landed on the machine")
+    dc.add_argument("--file", action="append", default=[], help="local file or directory sent, repeatable: takes a manifest")
+    dc.add_argument("--tunnel", help="e.g. \"reverse tunnel to local port 8917\"")
+    dc.add_argument("--how", default="", help="e.g. scp")
+    dc.add_argument("--note", default="")
+    dc.add_argument("--confidence", choices=["direct", "inferred"], default="direct")
+    dc.add_argument("--at", help="when it happened, if not now (ISO time)")
     a = ap.parse_args(argv)
     if a.group == "pod":
         return _pod(a)
+    if a.group == "custody":
+        return _custody(a)
     if a.group == "ledger":
         from gipper import ledger
         for rec in ledger.read(since=a.since, job=a.job):

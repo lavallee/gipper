@@ -40,7 +40,7 @@ These names are stable within 0.x:
 | `gipper.providers.runpod.Runpod().api()` | the raw Runpod client |
 | `gipper.ledger.read(since=, kinds=, job=)` / `.write(kind, payload, job=)` | receipts |
 | `gipper.history.History.load()` | memory: `.failure(p, machine)`, `.ready_s`, `.mbps`, `.compute_s(workload, gpu)`, `.billing_factor(p)` |
-| `gipper.ssh.Remote(host, port, user)` | `.run`, `.put`, `.get` over gipper's key |
+| `gipper.ssh.Remote(host, port, user)` | `.run`, `.put`, `.put_secrets`, `.get` over gipper's key. `.put` records a custody manifest first and can raise `gipper.custody.Refused` |
 
 Kept for scripts written before 0.2: `gipper.runpod.api.Api` and
 `gipper.runpod.run._wait_ready`. Any other `gipper.runpod.run` name raises an
@@ -57,6 +57,8 @@ instead of silently patching nothing.
 - `spend` (computed at teardown) and `spend.billed` (the provider's bill, from
   `reconcile`; the latest one per machine counts). `gipper.billing.spend_since(t)`
   combines them by machine.
+- `custody.machine`, `custody.upload`, `custody.uploaded`, `custody.secret`,
+  `custody.note`: what reached a machine ([custody.md](custody.md)).
 - Receipts without `provider` predate 2026-10-26 and are Runpod's.
 
 An editable install imports code directly from its checkout. Use an isolated

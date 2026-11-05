@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="dark light"><title>Custody: what reached each machine — gipper</title>
+<meta name="description" content="Custody: what reached each machine: documentation for the gipper GPU job runner.">
+<link rel="canonical" href="https://lavallee.github.io/gipper/guides/custody.html">
+<link rel="stylesheet" href="../style.css"><link rel="icon" href="../favicon.svg" type="image/svg+xml"></head>
+<body><a class="skip" href="#main">Skip to content</a><header class="site-header wrap"><a class="wordmark" href="../index.html">gipper <span>v0.4.0</span></a><nav aria-label="Documentation"><a href="quickstart.html">Quickstart</a><a href="clients.html">Python API</a><a href="https://github.com/lavallee/gipper">GitHub</a></nav></header>
+<main class="guide wrap" id="main"><a class="back" href="../index.html">gipper documentation</a><h1>Custody: what reached each machine</h1>
+<p>When a provider tells you a machine hosting your work may have been compromised, you
+need three answers quickly: what was on it, which credentials to rotate, and what you
+can't be sure about. gipper keeps that trail as it works.</p>
+<pre><code>gipper custody report --provider runpod --since 2026-10-01 --check-providers
+gipper custody show POD_ID                # every file sent to one machine
+gipper custody find ./data/private.csv    # which machines received this file
+gipper custody check ./secrets.env        # was this exact value ever placed on a machine
+</code></pre>
+<p><code>report</code> has four sections:</p>
+<ul>
+<li><strong>Rotate:</strong> credentials placed on machines, with how many machines and distinct values.</li>
+<li><strong>Review:</strong> uploaded files that look sensitive.</li>
+<li><strong>Machines:</strong> each rental with its machine ID, job, uploads and env names.</li>
+<li><strong>Gaps:</strong> what the report can't vouch for. Read this section before relying on the others.</li>
+</ul>
+<p>Add <code>--json</code> for the whole report as data. <code>--pod</code>, <code>--machine</code> and <code>--until</code> narrow it.</p>
+<h2>What is recorded</h2>
+<p><strong>Each upload.</strong> <code>Remote.put</code> reads the tar stream it is about to send, so exclude rules
+apply exactly as they will on the wire. It stores a manifest (path, size, sha256, mode)
+under <code>~/.local/share/gipper/custody</code> with owner-only permissions, then writes a
+<code>custody.upload</code> receipt. Only then does anything leave. If the manifest can't be taken,
+the upload doesn't happen. A <code>custody.uploaded</code> receipt records the outcome. An upload
+with no outcome, or a failed one, may still have delivered bytes, so treat it as arrived.</p>
+<p><strong>Each machine.</strong> <code>custody.machine</code> records provider, machine ID, address, image, env
+names, and hashes of the job file and command.</p>
+<p><strong>Sensitive material.</strong> Uploads are checked for file names like <code>.env</code>, <code>id_ed25519</code>
+and <code>*.pem</code>, and content patterns like private keys and common API tokens. Findings keep
+the path and rule, never the matched text. Files over 2 MB are hashed but not scanned,
+and archives are not opened. Both appear under Gaps.</p>
+<p><strong>Credentials.</strong> Values are never recorded. A fingerprint is a keyed hash, with the key
+kept beside the ledger, so <code>check</code> can recognise a value without the ledger being
+usable to guess it. After you rotate, <code>check</code> on the new values should report that none
+has been seen on a machine.</p>
+<h2>Placing a credential on a machine</h2>
+<p>Don't upload credential files. Do this instead, which records the names:</p>
+<pre><code class="language-python">remote.put_secrets({&quot;SERVICE_TOKEN&quot;: token}, &quot;/root/job/service.env&quot;)
+</code></pre>
+<p>The file is mode 600, and the values travel over stdin rather than the command line. It
+is receipted before sending, so a failed write still counts as exposed.</p>
+<h2>Recording what went around gipper</h2>
+<p>gipper can't see a <code>scp</code> you ran by hand, a tunnel, or a machine created in a provider's
+console. Declare them, and they join the report:</p>
+<pre><code>gipper custody declare --provider runpod --pod POD_ID \
+  --secret SERVICE_TOKEN --from-env ./secrets.env --path /root/job/service.env --how scp
+gipper custody declare --provider runpod --pod POD_ID --file ./bundle --path /root/job/bundle --how scp
+gipper custody declare --provider runpod --pod POD_ID --tunnel &quot;reverse tunnel to local port 8917&quot;
+</code></pre>
+<p>Use <code>--at</code> for something that happened earlier, and <code>--confidence inferred</code> when you
+worked it out rather than saw it. <code>report --check-providers</code> compares providers' bills
+with the ledger and lists machines gipper has never heard of. This call is read-only.</p>
+<h2>Refusing uploads</h2>
+<pre><code class="language-toml"># ~/.config/gipper/config.toml
+custody_on_sensitive = &quot;refuse&quot;                # default &quot;warn&quot;: record it and say so
+custody_secret_files = [&quot;~/.config/app/.env&quot;]  # these values must never be uploaded
+</code></pre>
+<pre><code class="language-toml"># in a job
+[custody]
+on_sensitive = &quot;refuse&quot;
+allow = [&quot;tests/fixtures/*.pem&quot;]               # reviewed false positives
+</code></pre>
+<p>Provider keys and values from <code>custody_secret_files</code> are always refused, even when a
+path is allowed. Jobs are checked before renting, so a refusal doesn't cost a machine.</p>
+<h2>Limits</h2>
+<ul>
+<li>It records what passed through gipper or was declared. Commands run on a machine, and
+anything a job downloaded for itself, are not recorded. The command is kept as a hash.</li>
+<li>Outputs brought back from a machine have no manifest yet.</li>
+<li>Scanning catches common shapes and known values, not every secret. A clean scan is not
+proof that a file holds none.</li>
+<li>Providers may add credentials of their own to a machine, such as a machine-scoped API
+key. Check your provider's console for keys that outlived their machines.</li>
+<li>The ledger is append-only by convention and isn't tamper-proof. Treat it as your own
+record, not as evidence against an attacker who had access to this machine.</li>
+<li>A trail only exists from the release that adds it. Earlier rentals show under Gaps.</li>
+</ul>
+</main>
+<footer class="wrap footer"><span>gipper v0.4.0 · MIT</span><a href="https://github.com/lavallee/gipper/issues">Report a documentation issue</a></footer></body></html>

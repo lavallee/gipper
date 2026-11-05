@@ -54,6 +54,7 @@ working *on* gipper.
 | `costs.py` | the whole-run estimate and score for one offer |
 | `history.py` | memory, read from the ledger: failure rates, ready times, link speeds, compute times, billing factors |
 | `run.py` | the run: plan, rent, preflight, upload, detached job, log, checkpoints, collect, teardown |
+| `custody.py` | what reached each machine: manifests, scanning, the incident report |
 | `lifecycle.py` | verified teardown |
 | `reap.py` | the 15-minute sweep for forgotten machines |
 | `billing.py` | providers' bills → `spend.billed`; spend for the daily cap |
