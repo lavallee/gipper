@@ -9,14 +9,20 @@
 <p>Gipper needs a Linux client, Python 3.12+, OpenSSH, and tar with gzip support.
 Provider accounts supply the GPUs; a missing API key disables that provider for
 rentals. Your application and dependencies remain part of your job.</p>
-<h2>Install from source</h2>
-<pre><code class="language-sh">git clone https://github.com/lavallee/gipper.git
-cd gipper
-uv tool install .
+<h2>Install</h2>
+<pre><code class="language-sh">uv tool install gipper
 gipper --help
 </code></pre>
-<p>Alternatively, use <code>pip install .</code> in a virtual environment. Install uv separately
-if using the uv commands. The Python runtime has no third-party dependencies.</p>
+<p>Alternatively, use <code>python -m pip install gipper</code> in a virtual environment.
+Install uv separately if using the uv commands. The Python runtime has no
+third-party dependencies.</p>
+<p>This walkthrough uses the example files from the repository:</p>
+<pre><code class="language-sh">git clone https://github.com/lavallee/gipper.git
+cd gipper
+</code></pre>
+<p>For an installation from this source checkout, use <code>uv tool install .</code> instead
+of the package-index command above. See <a href="https://github.com/lavallee/gipper/blob/main/CONTRIBUTING.md">contributing</a>
+for development setup.</p>
 <h2>Configure a provider</h2>
 <pre><code class="language-sh">mkdir -p ~/.config/gipper
 (umask 077; cp -n .env.example ~/.config/gipper/.env)

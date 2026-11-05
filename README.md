@@ -15,7 +15,7 @@ fees, and host failures. An append-only local ledger records runs and costs;
 future estimates learn from **your own** workloads and provider history. A fresh
 installation starts with stated defaults, not someone else's rental history.
 
-**Status: 0.3.0, alpha.** Linux client, CLI and Python API, no daemon. Runpod and
+**Status: 0.4.0, alpha.** Linux client, CLI and Python API, no daemon. Runpod and
 Vast have live-run validation; Shadeform is experimental and has not had a live
 smoke test. See the [roadmap](ROADMAP.md) for planned features and
 [SECURITY.md](SECURITY.md) for trust and billing limits. Licensed under [MIT](LICENSE).
@@ -27,7 +27,15 @@ gzip support. `ping` is optional for interactive placement. The Python runtime
 has no third-party dependencies. Remote machines need a Linux shell, `tar`,
 `timeout`, `curl`, and NVIDIA tools; the bootstrap installs `uv` if needed.
 
-Install from source (no PyPI release is assumed):
+Install the CLI from [PyPI](https://pypi.org/project/gipper/):
+
+```sh
+uv tool install gipper
+gipper --help
+```
+
+Alternatively, use `python -m pip install gipper` in a virtual environment.
+To get the example jobs or install from source:
 
 ```sh
 git clone https://github.com/lavallee/gipper.git
