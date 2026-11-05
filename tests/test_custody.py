@@ -105,11 +105,13 @@ def test_configured_secret_files_are_refused_even_if_allowed(tmp_path, monkeypat
 def test_secret_files_count_only_secret_looking_names_or_the_ones_named(tmp_path):
     env, keys = tmp_path / "app.env", tmp_path / "keys.json"
     token = "-".join(["tok", "abcdefgh", "123"])   # assembled so secret scanners don't flag the fixture
-    env.write_text(f"SERVICE_TOKEN={token}\nQUEUE_DB=/home/me/queue.sqlite\nPUBLIC_URL=https://example.org/x\n")
+    env.write_text(f"SERVICE_TOKEN={token}\nQUEUE_DB=/home/me/queue.sqlite\nPUBLIC_URL=https://example.org/x\n"
+                   "SOMM_KEY_PROFILE=personal-default\nAUTH_TOKEN_FILE=/run/secrets/token\n")
     keys.write_text(json.dumps({"operator": "op-value-1234567", "viewer": "vw-value-1234567", "label": "a public label"}))
     config.CONFIG_FILE.write_text(f'custody_secret_files = ["{env}", {{ path = "{keys}", names = ["operator", "viewer"] }}, "{tmp_path / 'gone.env'}"]\n')
     known = custody.known_secrets()
     assert set(known.values()) >= {"SERVICE_TOKEN", "operator", "viewer"}
+    assert "personal-default" not in known and "/run/secrets/token" not in known
     assert "/home/me/queue.sqlite" not in known and "https://example.org/x" not in known and "a public label" not in known
 
 

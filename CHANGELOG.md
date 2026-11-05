@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.4.3 (2026-11-05)
+
+### Fixed
+
+- Names that describe a secret rather than hold one (ending in `_PROFILE`, `_ID`,
+  `_URL`, `_PATH`, `_FILE` and similar) no longer count from `custody_secret_files`.
+  `SOMM_KEY_PROFILE`'s plain-word value would otherwise refuse any upload
+  containing that word.
+
 ## 0.4.2 (2026-11-05)
 
 ### Fixed
