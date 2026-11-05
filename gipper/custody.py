@@ -99,6 +99,8 @@ def read_values(path):
 
 
 SECRET_NAME = re.compile(r"(?i)(KEY|TOKEN|SECRET|PASSWORD|PASSWD|PASSPHRASE|AUTH|CREDENTIAL|PRIVATE|COOKIE|SESSION)")
+# ...but not names that describe a secret rather than hold one: SOMM_KEY_PROFILE is a profile name.
+NOT_SECRET_NAME = re.compile(r"(?i)_(PROFILE|NAME|ID|FILE|PATH|DIR|URL|URI|HOST|PORT|MODE|TYPE|ENV|REGION|USER|USERNAME|EMAIL|EXPIRES|UNTIL|EPOCH)$")
 
 
 def _secret_sources():
@@ -128,7 +130,7 @@ def known_secrets():
             print(f"custody: secret file {path} is missing; its values can't be checked", flush=True)
             continue
         for name, value in values.items():
-            if len(value) >= 8 and (name in names if names is not None else bool(SECRET_NAME.search(name))):
+            if len(value) >= 8 and (name in names if names is not None else bool(SECRET_NAME.search(name)) and not NOT_SECRET_NAME.search(name)):
                 known[value] = name
     return known
 
