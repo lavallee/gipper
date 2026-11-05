@@ -1,5 +1,6 @@
 """Validate the built wheel and sdist, without installing runtime dependencies."""
 import email
+import re
 import tarfile
 import tomllib
 import zipfile
@@ -16,6 +17,11 @@ with zipfile.ZipFile(wheel) as archive:
     assert all(n.startswith(("gipper/", f"gipper-{version}.dist-info/")) for n in names)
     metadata = email.message_from_bytes(archive.read(f"gipper-{version}.dist-info/METADATA"))
     assert metadata["Version"] == version
+    # Package indexes display the README captured at build time. A stale status
+    # must fail before upload even when package metadata versions agree.
+    description = metadata.get_payload()
+    for declared in re.findall(r"\*\*Status:\s*(\d+\.\d+\.\d+)", description):
+        assert declared == version, f"README status {declared} disagrees with package {version}"
     assert metadata["License-Expression"] == "MIT"
     assert metadata["Requires-Python"] == project["requires-python"]
     assert all("extra ==" in requirement for requirement in metadata.get_all("Requires-Dist", [])), "runtime dependency added"

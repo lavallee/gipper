@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.4.1 (2026-11-05)
+
+### Fixed
+
+- Remove a stale version from the README status and refresh the PyPI package
+  description with the verified package-index install instructions.
+- Reject stale numeric README status versions during distribution validation.
+  Pages continues to derive its version from package metadata.
+
+
 ## 0.4.0 (2026-11-05)
 
 A forensic trail of what reached each rented machine. When a provider reports an

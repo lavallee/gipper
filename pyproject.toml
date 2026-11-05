@@ -1,6 +1,6 @@
 [project]
 name = "gipper"
-version = "0.4.0"
+version = "0.4.1"
 description = "Run GPU jobs across cloud markets with cost estimates, verified teardown, and an append-only ledger"
 readme = "README.md"
 license = "MIT"
