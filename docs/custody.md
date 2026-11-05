@@ -74,7 +74,10 @@ with the ledger and lists machines gipper has never heard of. This call is read-
 ```toml
 # ~/.config/gipper/config.toml
 custody_on_sensitive = "refuse"                # default "warn": record it and say so
-custody_secret_files = ["~/.config/app/.env"]  # these values must never be uploaded
+custody_secret_files = [
+  "~/.config/app/.env",                        # values whose names look secret: KEY, TOKEN, PASSWORD...
+  { path = "~/.config/app/keys.json", names = ["operator", "viewer"] },   # exactly these
+]
 ```
 
 ```toml
