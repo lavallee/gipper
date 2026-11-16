@@ -1,10 +1,12 @@
-"""Runpod: GraphQL for prices, stock and the account, REST for pods and network
-volumes. Containers with ssh as root; TCP and HTTP ports only ("Pods do not
-support UDP connections", docs.runpod.io/pods/configuration/expose-ports).
+"""Runpod: REST v2 (api.runpod.io/v2) for prices, stock, pods, network volumes and
+billing; GraphQL only for the account (`myself` has no v2 route). Containers with
+ssh as root; TCP and HTTP ports only ("Pods do not support UDP connections",
+docs.runpod.io/pods/configuration/expose-ports).
 
-Regions: stock is asked per country (`lowestPrice(countryCode:)`), and the pod is
-created with `countryCodes`, so a 4090 that only exists in Iceland is not rented
-for a job that must stay in the US.
+Regions: stock is asked per country (the catalog's `countryCodes` filter), and the
+pod is created with `dataCenterIds` taken from that same answer, so a 4090 that
+only exists in Iceland is not rented for a job that must stay in the US. v2 has no
+`countryCodes` on create; `dataCenterIds` is enforced, so the restriction holds.
 """
 import re
 import time
@@ -17,9 +19,9 @@ from gipper.providers import BadHost, Provider, Unavailable
 from gipper.ssh import Remote
 
 GRAPHQL = "https://api.runpod.io/graphql"
-REST = "https://rest.runpod.io/v1"
+REST = "https://api.runpod.io/v2"
 RunpodError = ProviderError
-# What POST /pods accepts for allowedCudaVersions (REST v1 schema, 2026-10)
+# What gpu.allowedCudaVersions accepts on POST /v2/pods (the v1 list, 2026-10; v2 matches exactly)
 CUDA_VERSIONS = ("13.0", "12.9", "12.8", "12.7", "12.6", "12.5", "12.4", "12.3", "12.2", "12.1", "12.0", "11.8")
 
 
@@ -39,15 +41,30 @@ class Api:
     def account(self):
         return self.gql("query { myself { clientBalance currentSpendPerHr spendLimit } }")["myself"]
 
+    def catalog(self, cloud, country=None):
+        """GET /catalog/gpus with stock for one cloud, optionally scoped to one country."""
+        q = f"include=AVAILABILITY&product=POD&count=1&cloud={cloud}" + (f"&countryCodes={country}" if country else "")
+        return self._req("GET", f"{REST}/catalog/gpus?{q}")["gpus"]
+
     def gpu_types(self, countries=()):
-        """Every GPU type with prices; stock overall (`lowestPrice`) and, per country
-        and cloud, as `stock_<CC>_<community|secure>`."""
-        extra = "".join(
-            f' stock_{cc}_{c}: lowestPrice(input:{{gpuCount:1, countryCode:"{cc}", secureCloud:{str(c == "secure").lower()}}}){{ stockStatus }}'
-            for cc in countries for c in ("community", "secure"))
-        q = ("query { gpuTypes { id displayName memoryInGb secureCloud communityCloud securePrice communityPrice "
-             f"lowestPrice(input:{{gpuCount:1}}){{ uninterruptablePrice stockStatus }}{extra} }} }}")
-        return self.gql(q)["gpuTypes"]
+        """Every GPU type with prices; stock (NONE|LOW|MEDIUM|HIGH) per cloud as
+        `stock_<community|secure>` and, per country, `stock_<CC>_<community|secure>`."""
+        out = {}
+        for c in ("community", "secure"):
+            for cc in (countries or (None,)):
+                key = f"stock_{cc}_{c}" if cc else f"stock_{c}"
+                for g in self.catalog(c.upper(), cc):
+                    out.setdefault(g["id"], g)[key] = g.get("availability")
+        return list(out.values())
+
+    def data_centers(self, gpu_id, cloud, countries):
+        """Data centers in `countries` that offer this GPU type (the stand-in for v1's
+        `countryCodes` on create)."""
+        ids = []
+        for g in self.catalog(cloud, ",".join(countries)):
+            if g["id"] == gpu_id:
+                ids += [dc["id"] for dc in g.get("dataCenters") or [] if dc["id"] not in ids]
+        return ids
 
     def create_pod(self, spec):
         return self._req("POST", f"{REST}/pods", spec)
@@ -56,27 +73,39 @@ class Api:
         return self._req("GET", f"{REST}/pods/{pod_id}")
 
     def list_pods(self):
-        d = self._req("GET", f"{REST}/pods")
-        return d if isinstance(d, list) else d.get("pods", d.get("data", []))
+        """Every pod, walking the pages (`GET /pods` takes no filters)."""
+        out, cursor = [], None
+        while True:
+            d = self._req("GET", f"{REST}/pods" + (f"?cursor={cursor}" if cursor else ""))
+            out += d.get("pods", [])
+            page = d.get("pagination") or {}
+            cursor = page.get("nextCursor")
+            if not (page.get("hasNextPage") and cursor):
+                return out
 
     def terminate_pod(self, pod_id):
         return self._req("DELETE", f"{REST}/pods/{pod_id}")
 
     def volumes(self):
-        d = self._req("GET", f"{REST}/networkvolumes")
-        return d if isinstance(d, list) else d.get("networkVolumes", d.get("data", []))
+        return self._req("GET", f"{REST}/network-volumes").get("networkVolumes", [])
 
     def create_volume(self, name, size_gb, datacenter):
-        return self._req("POST", f"{REST}/networkvolumes", {"name": name, "size": size_gb, "dataCenterId": datacenter})
+        return self._req("POST", f"{REST}/network-volumes", {"name": name, "size": size_gb, "dataCenter": datacenter})
 
     def delete_volume(self, volume_id):
-        return self._req("DELETE", f"{REST}/networkvolumes/{volume_id}")
+        return self._req("DELETE", f"{REST}/network-volumes/{volume_id}")
 
     _gql = gql   # the name scripts written before 2026-10-26 use
 
 
 def _price(g, cloud):
-    return g.get("communityPrice" if cloud == "COMMUNITY" else "securePrice") or None
+    return (g.get("price") or {}).get("community" if cloud == "COMMUNITY" else "secure") or None
+
+
+def _stock(level):
+    """v2's NONE|LOW|MEDIUM|HIGH as the High/Medium/Low receipts and Offer.stock have
+    always carried; NONE (and unknown) is no stock."""
+    return level.title() if level in ("LOW", "MEDIUM", "HIGH") else None
 
 
 def offers_from(gpu_types, clouds=("COMMUNITY", "SECURE"), countries=()):
@@ -87,18 +116,18 @@ def offers_from(gpu_types, clouds=("COMMUNITY", "SECURE"), countries=()):
     for cloud in clouds:
         c = cloud.lower()
         for g in gpu_types:
-            if not g.get("communityCloud" if cloud == "COMMUNITY" else "secureCloud"):
+            if not g.get("community" if cloud == "COMMUNITY" else "secure"):
                 continue
             p = _price(g, cloud)
             if not p:
                 continue
             if countries:
-                stocked = [(cc, (g.get(f"stock_{cc}_{c}") or {}).get("stockStatus")) for cc in countries]
+                stocked = [(cc, _stock(g.get(f"stock_{cc}_{c}"))) for cc in countries]
                 stocked = [(cc, s) for cc, s in stocked if s]
                 country, stock = stocked[0] if stocked else (countries[0], None)
             else:
-                country, stock = None, (g.get("lowestPrice") or {}).get("stockStatus")
-            out.append(Offer("runpod", g["id"], float(g.get("memoryInGb") or 0), p, where=f"{c} {country or ''}".strip(),
+                country, stock = None, _stock(g.get(f"stock_{c}"))
+            out.append(Offer("runpod", g["id"], float(g.get("memory") or 0), p, where=f"{c} {country or ''}".strip(),
                              country=country,
                              stock=stock, udp=False, ref={"gpu_id": g["id"], "cloud": cloud}))
     return out
@@ -136,45 +165,45 @@ class Runpod(Provider):
         api = self.api()
         s = settings()
         cloud = offer.ref["cloud"]
+        gpu = {"id": offer.ref["gpu_id"], "count": 1, **_cuda(job.placement.min_cuda, s["cuda_versions"])}
         spec = {
-            "name": name, "imageName": job.image or s["image"], "gpuTypeIds": [offer.ref["gpu_id"]], "gpuCount": 1,
-            "cloudType": cloud, "computeType": "GPU", "containerDiskInGb": job.container_disk_gb, "volumeInGb": 0,
-            # direct ssh (tar streams) needs a public IP: community hosts must offer one; secure always does
-            "ports": _tcp_ports(job.ports), **({"supportPublicIp": True} if cloud == "COMMUNITY" else {}),
-            **_cuda(job.placement.min_cuda, s["cuda_versions"]),
+            "name": name, "image": job.image or s["image"], "gpu": gpu, "cloud": cloud, "disk": job.container_disk_gb,
+            "ports": _tcp_ports(job.ports),
             "env": {"PUBLIC_KEY": pubkey, **job.env},
         }
         if job.volume:  # the volume pins the data centre, which already fixes the country
             vol = next((v for v in api.volumes() if v.get("name") == job.volume), None)
             if not vol:
                 raise SystemExit(f"network volume {job.volume!r} not found")
-            spec.update(networkVolumeId=vol["id"], volumeMountPath="/workspace", dataCenterIds=[vol["dataCenterId"]])
+            spec.update(mounts={"network": [{"volumeId": vol["id"], "path": "/workspace"}]}, dataCenterIds=[vol["dataCenter"]])
         elif job.regions:
-            spec["countryCodes"] = [r.upper() for r in job.regions]
+            # v1's `countryCodes` was enforced by the scheduler; v2 wants the data centres named. Fail closed:
+            # a country restriction is never widened here.
+            regions = [r.upper() for r in job.regions]
+            centers = api.data_centers(gpu["id"], cloud, regions)
+            if not centers:
+                raise Unavailable(f"Runpod has no {offer.gpu} {cloud.lower()} data center in {','.join(regions)}")
+            spec["dataCenterIds"] = centers
         try:
             pod = api.create_pod(spec)
         except ProviderError as e:
             msg = str(e).lower()
-            if "no instances" in msg or "not available" in msg:
+            if "http 400" in msg and ("instances available" in msg or "no instances" in msg):
                 raise Unavailable(str(e)) from None
-            if "http 400" in msg and "gputypeids" in msg:
-                # GraphQL lists types (MIG slices, new SKUs) that POST /pods doesn't accept yet
-                raise Unavailable(f"Runpod won't create {offer.gpu} through its REST API") from None
             raise
-        return {"id": pod["id"], "usd_h": pod.get("costPerHr") or offer.usd_h,
-                "gpu": (pod.get("machine") or {}).get("gpuTypeId") or offer.gpu}
+        return {"id": pod["id"], "usd_h": pod.get("cost") or offer.usd_h, "gpu": (pod.get("gpu") or {}).get("id") or offer.gpu}
 
     def wait_ready(self, pod_id, job, timeout_s=900):
         api = self.api()
         t0 = time.time()
         while time.time() - t0 < timeout_s:
             p = api.get_pod(pod_id)
-            mapped = p.get("portMappings") or {}
-            ip = p.get("publicIp")
-            if ip and mapped.get("22"):
-                ports = {k: {"host": ip, "port": v} for k, v in mapped.items() if k != "22"}
-                return Remote(ip, mapped["22"]), {"machine": p.get("machineId"),
-                                                  "gpu": (p.get("machine") or {}).get("gpuTypeId"), "ports": ports}
+            # runtime.ports is null until the pod is RUNNING; each entry carries its own host
+            mapped = {x["private"]: x for x in (p.get("runtime") or {}).get("ports") or [] if x.get("public") and x.get("ip")}
+            if 22 in mapped:
+                ports = {str(k): {"host": x["ip"], "port": x["public"]} for k, x in mapped.items() if k != 22}
+                # v2 exposes no host machine id: Runpod hosts are remembered by provider, not machine
+                return Remote(mapped[22]["ip"], mapped[22]["public"]), {"machine": None, "gpu": (p.get("gpu") or {}).get("id"), "ports": ports}
             time.sleep(5)
         raise BadHost(f"pod {pod_id} had no ssh endpoint after {timeout_s}s")
 
@@ -185,25 +214,26 @@ class Runpod(Provider):
         out = []
         for p in self.api().list_pods():
             if (p.get("name") or "").startswith("gipper-"):
-                started = p.get("lastStartedAt")
+                started = p.get("startedAt")
                 try:
                     started = datetime.fromisoformat(started.replace("Z", "+00:00")).timestamp() if started else None
                 except ValueError:
                     started = None
                 out.append({"id": p["id"], "name": p["name"], "started": started,
-                            "status": p.get("desiredStatus"), "usd_h": p.get("costPerHr")})
+                            "status": p.get("status"), "usd_h": p.get("cost")})
         return out
 
     def billed(self, since):
-        """{pod id: (usd, detail)} Runpod billed since `since` (epoch s), per pod per day."""
+        """{pod id: (usd, detail)} Runpod billed since `since` (epoch s), one record per pod per day."""
         start = datetime.fromtimestamp(since, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-        rows = self.api()._req("GET", f"{REST}/billing/pods?bucketSize=day&grouping=podId&startTime={start}")
+        end = datetime.fromtimestamp(time.time() + 3600, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")   # v2 wants both bounds
+        d = self.api()._req("GET", f"{REST}/billing/pods?bucketSize=day&startTime={start}&endTime={end}")
         out = {}
-        for r in rows if isinstance(rows, list) else []:
+        for r in d.get("records", []) if isinstance(d, dict) else []:
             usd, detail = out.get(r["podId"], (0.0, {}))
-            detail["billed_s"] = round(detail.get("billed_s", 0) + (r.get("timeBilledMs") or 0) / 1000)
-            detail["disk_gb"] = r.get("diskSpaceBilledGB")
-            out[r["podId"]] = (usd + (r.get("amount") or 0), detail)
+            for k in ("gpu", "cpu", "disk"):
+                detail[k] = round(detail.get(k, 0) + (r.get(f"{k}Amount") or 0), 6)
+            out[r["podId"]] = (usd + (r.get("totalAmount") or 0), detail)
         return out
 
     def account(self):
@@ -215,7 +245,7 @@ PROVIDER = Runpod()
 
 
 def _cuda(min_cuda, configured):
-    """allowedCudaVersions: the configured list, or every version Runpod knows at or
+    """gpu.allowedCudaVersions: the configured list, or every version Runpod knows at or
     above the job's min_cuda; nothing (any host) if neither is set."""
     versions = list(configured or CUDA_VERSIONS)
     if min_cuda:

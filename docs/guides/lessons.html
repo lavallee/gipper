@@ -4,7 +4,7 @@
 <meta name="description" content="Operational notes: documentation for the gipper GPU job runner.">
 <link rel="canonical" href="https://lavallee.github.io/gipper/guides/lessons.html">
 <link rel="stylesheet" href="../style.css"><link rel="icon" href="../favicon.svg" type="image/svg+xml"></head>
-<body><a class="skip" href="#main">Skip to content</a><header class="site-header wrap"><a class="wordmark" href="../index.html">gipper <span>v0.4.3</span></a><nav aria-label="Documentation"><a href="quickstart.html">Quickstart</a><a href="clients.html">Python API</a><a href="https://github.com/lavallee/gipper">GitHub</a></nav></header>
+<body><a class="skip" href="#main">Skip to content</a><header class="site-header wrap"><a class="wordmark" href="../index.html">gipper <span>v0.5.0</span></a><nav aria-label="Documentation"><a href="quickstart.html">Quickstart</a><a href="clients.html">Python API</a><a href="https://github.com/lavallee/gipper">GitHub</a></nav></header>
 <main class="guide wrap" id="main"><a class="back" href="../index.html">gipper documentation</a><h1>Operational notes</h1>
 <p>These are implementation lessons from live rentals, useful across workloads.
 They describe why safeguards exist; they are not provider performance rankings
@@ -32,8 +32,13 @@ charges to the reconciliation date would distort the daily cap.</li>
 matters to an interactive job; probes from another client are only proxies.</li>
 <li>Small transfer probes include SSH startup overhead. Only real transfers of
 at least 20 MB update link-speed history; the optional probe checks suitability.</li>
-<li>Advertised GPU types do not always have rentable stock. The Runpod adapter
-skips GPU types rejected by the create API instead of abandoning other offers.</li>
+<li>Advertised GPU types do not always have rentable stock. Runpod's catalog reports
+stock per cloud and country; an offer without stock is ranked last, not dropped.</li>
+<li>Runpod retired REST v1 and its GraphQL pricing on short notice (v1 on
+2026-11-16, GraphQL integrations early 2027). Keep every provider call in its
+one adapter module so a migration touches one file, and read the provider's
+published spec for query rules the docs omit (v2 billing needs both <code>startTime</code>
+and <code>endTime</code>).</li>
 <li>Set explicit CUDA and compute-capability requirements when your workload has
 them. Provider filters are supplemented by checks on the rented host.</li>
 </ul>
@@ -56,4 +61,4 @@ need separate names or explicit <code>[placement]</code> estimates.</li>
 with their date, job, provider, and closure result. Unit tests establish parsing
 and decisions; they do not demonstrate current provider behavior.</p>
 </main>
-<footer class="wrap footer"><span>gipper v0.4.3 · MIT</span><a href="https://github.com/lavallee/gipper/issues">Report a documentation issue</a></footer></body></html>
+<footer class="wrap footer"><span>gipper v0.5.0 · MIT</span><a href="https://github.com/lavallee/gipper/issues">Report a documentation issue</a></footer></body></html>

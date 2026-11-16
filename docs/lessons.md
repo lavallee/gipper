@@ -27,8 +27,13 @@ or promises about current stock, prices, or reliability.
   matters to an interactive job; probes from another client are only proxies.
 - Small transfer probes include SSH startup overhead. Only real transfers of
   at least 20 MB update link-speed history; the optional probe checks suitability.
-- Advertised GPU types do not always have rentable stock. The Runpod adapter
-  skips GPU types rejected by the create API instead of abandoning other offers.
+- Advertised GPU types do not always have rentable stock. Runpod's catalog reports
+  stock per cloud and country; an offer without stock is ranked last, not dropped.
+- Runpod retired REST v1 and its GraphQL pricing on short notice (v1 on
+  2026-11-16, GraphQL integrations early 2027). Keep every provider call in its
+  one adapter module so a migration touches one file, and read the provider's
+  published spec for query rules the docs omit (v2 billing needs both `startTime`
+  and `endTime`).
 - Set explicit CUDA and compute-capability requirements when your workload has
   them. Provider filters are supplemented by checks on the rented host.
 

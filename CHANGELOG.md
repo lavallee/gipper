@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.5.0 (2026-11-16)
+
+### Changed
+
+- **Runpod: moved to REST v2** (`api.runpod.io/v2`). Runpod retired REST v1 on
+  2026-11-16, so every Runpod call from 0.4.3 and earlier fails. Prices and stock
+  now come from `/catalog/gpus?include=AVAILABILITY&product=POD` (per cloud and
+  per country), pods and network volumes from `/pods` and `/network-volumes`, and
+  bills from `/billing/pods`. Only the account line (`gipper pod account`) still uses
+  GraphQL, which has no v2 route.
+- A job's `regions` still keep a Runpod pod inside those countries: the pod is
+  created in the data centers the catalog lists for them, and it fails closed
+  (the offer is skipped) when there are none.
+- `spend.billed` details for Runpod are now `gpu`, `cpu` and `disk` dollars;
+  v2 no longer reports `billed_s` or `disk_gb`.
+- `Api.gpu_types()` returns v2 catalog entries (`memory`, `price`, `availability`),
+  and `Api.list_pods()` walks every page.
+
+### Lost with v1
+
+- Runpod no longer reports which physical machine a pod landed on, so Runpod
+  rentals are remembered by provider, not by machine; per-machine failure, ready
+  and link-speed memory applies to Vast and Shadeform only.
+- Community pods can no longer demand a public IP at creation (`supportPublicIp`
+  has no v2 equivalent). A host without one never reaches ssh and ends as a bad
+  host after the wait.
+
 ## 0.4.3 (2026-11-05)
 
 ### Fixed

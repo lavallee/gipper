@@ -5,11 +5,11 @@ import pytest
 from gipper.http import ProviderError
 from gipper.providers import Unavailable
 
-RUNPOD_TYPES = [
-    {"id": "A5000", "memoryInGb": 24, "communityCloud": True, "secureCloud": True, "communityPrice": 0.16, "securePrice": 0.27,
-     "lowestPrice": {"stockStatus": None}},
-    {"id": "4090", "memoryInGb": 24, "communityCloud": True, "secureCloud": True, "communityPrice": 0.34, "securePrice": 0.89,
-     "lowestPrice": {"stockStatus": "Low"}, "stock_US_community": None, "stock_CA_community": {"stockStatus": "Low"}},
+RUNPOD_TYPES = [   # GET /v2/catalog/gpus?include=AVAILABILITY&product=POD (trimmed), stock_* added by Api.gpu_types
+    {"id": "A5000", "memory": 24, "community": True, "secure": True, "price": {"community": 0.16, "secure": 0.27},
+     "stock_community": "NONE", "stock_US_community": "NONE", "stock_CA_community": "NONE"},
+    {"id": "4090", "memory": 24, "community": True, "secure": True, "price": {"community": 0.34, "secure": 0.89},
+     "stock_community": "LOW", "stock_US_community": "NONE", "stock_CA_community": "LOW"},
 ]
 
 
@@ -18,11 +18,13 @@ def test_runpod_stock_is_per_country():
     o = {x.gpu: x for x in offers_from(RUNPOD_TYPES, ["COMMUNITY"], ["US", "CA"])}
     assert (o["4090"].country, o["4090"].stock) == ("CA", "Low")    # only Canada had one
     assert (o["A5000"].country, o["A5000"].stock) == ("US", None)   # none anywhere: kept, ranked last
+    assert {x.gpu: x.stock for x in offers_from(RUNPOD_TYPES, ["COMMUNITY"])} == {"4090": "Low", "A5000": None}
 
 
 def test_runpod_ports_cuda_and_unrentable_types(monkeypatch):
     from gipper.job import Job
     from gipper.market import Offer
+    from gipper.placement import Placement
     from gipper.providers import runpod
     assert runpod._tcp_ports(["8080/tcp", "8888/http"]) == ["22/tcp", "8080/tcp", "8888/http"]
     with pytest.raises(Unavailable):
@@ -30,13 +32,69 @@ def test_runpod_ports_cuda_and_unrentable_types(monkeypatch):
     assert runpod._cuda(12.8, [])["allowedCudaVersions"] == ["13.0", "12.9", "12.8"]
     assert runpod._cuda(None, []) == {}
 
-    class Api:   # what POST /pods says about a type GraphQL lists but REST won't create
+    made = []
+
+    class Api:
+        def __init__(self, err=None, centers=("US-KS-2",)):
+            self.err, self.centers = err, list(centers)
+
+        def data_centers(self, gpu_id, cloud, countries):
+            return self.centers
+
         def create_pod(self, spec):
-            raise ProviderError('POST /pods: HTTP 400: [{"problems":["At /pods/properties/gpuTypeIds/items/enum: ..."]}]')
+            made.append(spec)
+            if self.err:
+                raise ProviderError(self.err)
+            return {"id": "p1", "cost": 0.89, "gpu": {"id": spec["gpu"]["id"], "count": 1}}
+
+    offer = Offer("runpod", "NVIDIA GeForce RTX 4090", 24, 0.7, ref={"gpu_id": "NVIDIA GeForce RTX 4090", "cloud": "SECURE"})
+    job = Job(name="x", workload="w", command="true", placement=Placement(min_cuda=12.8), regions=["us"])
     monkeypatch.setattr(runpod.Runpod, "api", lambda self: Api())
+    got = runpod.PROVIDER.create(offer, job, "ssh-ed25519 AAAA", "gipper-x")
+    assert got == {"id": "p1", "usd_h": 0.89, "gpu": "NVIDIA GeForce RTX 4090"}
+    spec = made[0]   # the v2 body: nothing from v1 may leak into it (v2 422s on unknown fields)
+    assert spec["gpu"] == {"id": "NVIDIA GeForce RTX 4090", "count": 1, "allowedCudaVersions": ["13.0", "12.9", "12.8"]}
+    assert spec["dataCenterIds"] == ["US-KS-2"] and spec["cloud"] == "SECURE" and "mounts" not in spec
+    assert not {"imageName", "gpuTypeIds", "countryCodes", "containerDiskInGb", "volumeInGb", "supportPublicIp"} & set(spec)
+
+    monkeypatch.setattr(runpod.Runpod, "api", lambda self: Api(centers=()))   # a country restriction fails closed
     with pytest.raises(Unavailable):
-        runpod.PROVIDER.create(Offer("runpod", "NVIDIA RTX PRO 6000 Blackwell MIG", 24, 0.7, ref={"gpu_id": "x", "cloud": "SECURE"}),
-                               Job(name="x", workload="w", command="true"), "ssh-ed25519 AAAA", "gipper-x")
+        runpod.PROVIDER.create(offer, job, "ssh-ed25519 AAAA", "gipper-x")
+
+    monkeypatch.setattr(runpod.Runpod, "api", lambda self: Api(  # what v2 says when a data center list has no stock
+        'POST /v2/pods: HTTP 400: {"detail": "There are no longer any instances available with the requested specifications."}'))
+    with pytest.raises(Unavailable):
+        runpod.PROVIDER.create(offer, job, "ssh-ed25519 AAAA", "gipper-x")
+
+    monkeypatch.setattr(runpod.Runpod, "api", lambda self: Api('POST /v2/pods: HTTP 422: additional properties not allowed'))
+    with pytest.raises(ProviderError):   # a bad body is a bug, not scarce capacity
+        runpod.PROVIDER.create(offer, job, "ssh-ed25519 AAAA", "gipper-x")
+
+
+def test_runpod_wait_ready_reads_runtime_ports(monkeypatch):
+    from gipper.providers import runpod
+    pod = {"id": "p1", "status": "RUNNING", "gpu": {"id": "4090", "count": 1}, "runtime": {"ports": [
+        {"private": 22, "public": 40022, "type": "tcp", "ip": "1.2.3.4"},
+        {"private": 8888, "public": 40088, "type": "http", "ip": "1.2.3.4"}]}}
+
+    class Api:
+        def get_pod(self, pod_id):
+            return pod
+    monkeypatch.setattr(runpod.Runpod, "api", lambda self: Api())
+    remote, info = runpod.PROVIDER.wait_ready("p1", None)
+    assert (remote.host, remote.port) == ("1.2.3.4", 40022)
+    assert info == {"machine": None, "gpu": "4090", "ports": {"8888": {"host": "1.2.3.4", "port": 40088}}}
+
+
+def test_runpod_lists_every_page(monkeypatch):
+    from gipper.providers import runpod
+    pages = {None: {"pods": [{"id": "a", "name": "gipper-a", "cost": 0.3, "status": "RUNNING", "startedAt": "2026-11-16T10:00:00Z"}],
+                    "pagination": {"nextCursor": "c2", "hasNextPage": True}},
+             "c2": {"pods": [{"id": "b", "name": "other", "status": "RUNNING"}, {"id": "c", "name": "gipper-c", "status": "EXITED"}],
+                    "pagination": {"nextCursor": None, "hasNextPage": False}}}
+    monkeypatch.setattr(runpod.Api, "_req", lambda self, m, url, body=None: pages[url.partition("?cursor=")[2] or None])
+    ours = runpod.PROVIDER.list_ours.__func__(type("P", (), {"api": lambda self: runpod.Api("k")})())
+    assert [p["id"] for p in ours] == ["a", "c"] and ours[0]["usd_h"] == 0.3 and ours[0]["started"] > 0
 
 
 VAST_ROWS = [{"id": i, "machine_id": 100 + i, "gpu_name": "RTX 4090", "gpu_ram": 24564, "dph_total": 0.38 + i / 100,
@@ -62,15 +120,17 @@ def test_vast_and_runpod_bills(monkeypatch):
     monkeypatch.setattr(vast.Vast, "_req", lambda self, *a, **kw: charges)
     assert vast.PROVIDER.billed(0) == {"58107307": (0.028, {"gpu": 0.026, "disk": 0.002, "bwd": 0.0})}
 
-    rows = [{"amount": 0.04, "timeBilledMs": 260203, "diskSpaceBilledGB": 140, "podId": "p1", "time": "2026-10-25 00:00:00"},
-            {"amount": 0.01, "timeBilledMs": 60000, "diskSpaceBilledGB": 140, "podId": "p1", "time": "2026-10-26 00:00:00"}]
+    rows = {"records": [   # GET /v2/billing/pods?bucketSize=day: one record per pod per day
+        {"totalAmount": 0.04, "gpuAmount": 0.03, "cpuAmount": 0, "diskAmount": 0.01, "podId": "p1", "startTime": "2026-11-15T00:00:00Z"},
+        {"totalAmount": 0.01, "gpuAmount": 0.008, "cpuAmount": 0, "diskAmount": 0.002, "podId": "p1", "startTime": "2026-11-16T00:00:00Z"}],
+        "metadata": {"recordCount": 2}}
 
     class Api:
         def _req(self, method, url, body=None):
             return rows
     monkeypatch.setattr(runpod.Runpod, "api", lambda self: Api())
     usd, detail = runpod.PROVIDER.billed(0)["p1"]
-    assert usd == pytest.approx(0.05) and detail["billed_s"] == 320
+    assert usd == pytest.approx(0.05) and detail == {"gpu": 0.038, "cpu": 0, "disk": 0.012}
 
 
 SHADE_TYPES = [
