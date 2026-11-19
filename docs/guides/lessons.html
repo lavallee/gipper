@@ -4,7 +4,7 @@
 <meta name="description" content="Operational notes: documentation for the gipper GPU job runner.">
 <link rel="canonical" href="https://lavallee.github.io/gipper/guides/lessons.html">
 <link rel="stylesheet" href="../style.css"><link rel="icon" href="../favicon.svg" type="image/svg+xml"></head>
-<body><a class="skip" href="#main">Skip to content</a><header class="site-header wrap"><a class="wordmark" href="../index.html">gipper <span>v0.5.0</span></a><nav aria-label="Documentation"><a href="quickstart.html">Quickstart</a><a href="clients.html">Python API</a><a href="https://github.com/lavallee/gipper">GitHub</a></nav></header>
+<body><a class="skip" href="#main">Skip to content</a><header class="site-header wrap"><a class="wordmark" href="../index.html">gipper <span>v0.6.0</span></a><nav aria-label="Documentation"><a href="quickstart.html">Quickstart</a><a href="clients.html">Python API</a><a href="https://github.com/lavallee/gipper">GitHub</a></nav></header>
 <main class="guide wrap" id="main"><a class="back" href="../index.html">gipper documentation</a><h1>Operational notes</h1>
 <p>These are implementation lessons from live rentals, useful across workloads.
 They describe why safeguards exist; they are not provider performance rankings
@@ -60,5 +60,23 @@ need separate names or explicit <code>[placement]</code> estimates.</li>
 <p>Live provider changes should be qualified with bounded smoke runs and recorded
 with their date, job, provider, and closure result. Unit tests establish parsing
 and decisions; they do not demonstrate current provider behavior.</p>
+<h2>Serverless queue qualification (2026-11-19)</h2>
+<p>The Runpod adapter completed four real OCR extraction jobs through the public
+Gipper client. A 60.97-second clip returned in 16.27 seconds warm; a repetitive
+four-minute graphics fixture returned in 27.01 seconds warm. The first short
+request took 118.89 seconds including development dependency installation.
+These exclude downstream model review and are single-run observations, not
+service latency promises. Worker CUDA session selection and input hashes were
+checked, and endpoint deletion was independently verified.</p>
+<p>Installing the worker SDK directly into the CUDA base image failed when pip
+tried to uninstall Debian-managed <code>cryptography</code> without a RECORD file. An
+isolated virtual environment with <code>--system-site-packages</code> retained access to
+Torch/CUDA while keeping SDK dependencies separate. Apply the same isolation
+when building the example image. The example Dockerfile is authored; its image
+has not been built on this host because Docker daemon access is unavailable.</p>
+<p>Runpod read-back can add <code>workers.initTimeout = null</code> and omit an empty
+<code>gpu.excludedTypes</code>. Compare requested fields with their actual defaults, while
+rejecting changed worker bounds, GPU selection, and execution timeout. Provider
+health rollups alone cannot establish that a GPU was released or stopped billing.</p>
 </main>
-<footer class="wrap footer"><span>gipper v0.5.0 · MIT</span><a href="https://github.com/lavallee/gipper/issues">Report a documentation issue</a></footer></body></html>
+<footer class="wrap footer"><span>gipper v0.6.0 · MIT</span><a href="https://github.com/lavallee/gipper/issues">Report a documentation issue</a></footer></body></html>
