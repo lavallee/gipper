@@ -266,3 +266,10 @@ memory. To move a job between providers, check [docs/clients.md](docs/clients.md
 - [SECURITY.md](SECURITY.md): trust model and vulnerability reports
 - [RELEASING.md](RELEASING.md): release checklist
 - [CHANGELOG.md](CHANGELOG.md)
+
+## Serverless GPU queues
+
+Runpod Serverless support complements the Pod runner. Deploy a reusable queue endpoint,
+submit JSON jobs, and verify cleanup with `gipper serverless`. The client remains
+stdlib only. See [the serverless guide](docs/serverless.md) and
+[CUDA worker example](examples/serverless/README.md) for configuration and cost limits.

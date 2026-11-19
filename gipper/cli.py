@@ -220,6 +220,8 @@ def main(argv=None):
     signal.signal(signal.SIGPIPE, signal.SIG_DFL)  # `gipper pod hosts | head` ends quietly
     ap = argparse.ArgumentParser(prog="gipper", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="group")
+    from gipper.serverless.cli import parser as serverless_parser
+    serverless_parser(sub)
     pod = sub.add_parser("pod", help="rented GPUs (Runpod, Vast, Shadeform)")
     ps = pod.add_subparsers(dest="cmd", required=True)
     g = ps.add_parser("gpus")
@@ -282,6 +284,9 @@ def main(argv=None):
     dc.add_argument("--confidence", choices=["direct", "inferred"], default="direct")
     dc.add_argument("--at", help="when it happened, if not now (ISO time)")
     a = ap.parse_args(argv)
+    if a.group == "serverless":
+        from gipper.serverless.cli import main as serverless_main
+        return serverless_main(a)
     if a.group == "pod":
         return _pod(a)
     if a.group == "custody":

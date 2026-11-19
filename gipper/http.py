@@ -13,7 +13,9 @@ AGENT = "gipper/0.1 (+https://github.com/lavallee/gipper)"
 
 
 class ProviderError(RuntimeError):
-    pass
+    def __init__(self, message, *, status=None):
+        super().__init__(message)
+        self.status = status
 
 
 def request(method, url, body=None, headers=None, params=None, retries=3, timeout=60):
@@ -32,7 +34,7 @@ def request(method, url, body=None, headers=None, params=None, retries=3, timeou
             if e.code in (429, 500, 502, 503, 504) and attempt < retries - 1:
                 time.sleep(2 * (attempt + 1))
                 continue
-            raise ProviderError(f"{method} {url.split('?')[0]}: HTTP {e.code}: {msg}") from None
+            raise ProviderError(f"{method} {url.split('?')[0]}: HTTP {e.code}: {msg}", status=e.code) from None
         except (urllib.error.URLError, TimeoutError) as e:
             if attempt < retries - 1:
                 time.sleep(2 * (attempt + 1))

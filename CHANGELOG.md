@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.6.0 (2026-11-19)
+
+### Added
+
+- Runpod GPU Serverless queues through `gipper serverless`, alongside the existing
+  Pod runner. Deploy reusable endpoints or run one temporary job with verified
+  deletion, without adding runtime dependencies to Gipper.
+- Provider-neutral endpoint and JSON-job lifecycle, append-only `serverless.*`
+  receipts, input hashes, cancellation confirmation, and explicit recovery for
+  ambiguous submissions. Runpod is the first implemented serverless adapter.
+- Scale-to-zero defaults, worker and execution bounds, conservative admission
+  estimates, optional existing global or regional volumes, and a separate reaper
+  for expired temporary endpoints. Deliberately kept endpoints remain until deleted.
+- A CUDA matrix-multiplication worker example and a guide covering reuse, image
+  packaging, cost limitations, storage semantics, and the boundaries of validation.
+
+Serverless billing reconciliation, the Pod daily cap, cross-host failover, and
+nonzero minimum worker configuration are not part of this release.
+
 ## 0.5.0 (2026-11-16)
 
 ### Changed

@@ -6,7 +6,7 @@ kind = "reference-guide"
 form = "collection"
 status = "live"
 created = "2026-11-04"
-updated = "2026-11-16"
+updated = "2026-11-19"
 
 [build]
 commands = ["uv run --group site python scripts/build_site.py"]

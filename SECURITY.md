@@ -45,3 +45,14 @@ no promised response time.
 - The reaper manages all resources named `gipper-*` in each configured account,
   including ones not in its local ledger. Reserve that namespace and coordinate
   multiple clients/accounts; use a dedicated provider account when appropriate.
+
+
+## Serverless queues
+
+Serverless TOMLs select an image and optional executable entrypoint. Treat both
+as code. Handler inputs and outputs pass through the provider queue. Gipper
+records canonical JSON input hashes and job identifiers, while applications own
+the actual evidence. The existing Pod custody report and billing reconciliation
+do not include serverless receipts. Minimum workers are zero, but idle worker
+tails can bill. The separate serverless reaper only manages recorded, expired
+temporary endpoints; deliberately deployed endpoints require explicit deletion.

@@ -55,3 +55,26 @@ or promises about current stock, prices, or reliability.
 Live provider changes should be qualified with bounded smoke runs and recorded
 with their date, job, provider, and closure result. Unit tests establish parsing
 and decisions; they do not demonstrate current provider behavior.
+
+
+## Serverless queue qualification (2026-11-19)
+
+The Runpod adapter completed four real OCR extraction jobs through the public
+Gipper client. A 60.97-second clip returned in 16.27 seconds warm; a repetitive
+four-minute graphics fixture returned in 27.01 seconds warm. The first short
+request took 118.89 seconds including development dependency installation.
+These exclude downstream model review and are single-run observations, not
+service latency promises. Worker CUDA session selection and input hashes were
+checked, and endpoint deletion was independently verified.
+
+Installing the worker SDK directly into the CUDA base image failed when pip
+tried to uninstall Debian-managed `cryptography` without a RECORD file. An
+isolated virtual environment with `--system-site-packages` retained access to
+Torch/CUDA while keeping SDK dependencies separate. Apply the same isolation
+when building the example image. The example Dockerfile is authored; its image
+has not been built on this host because Docker daemon access is unavailable.
+
+Runpod read-back can add `workers.initTimeout = null` and omit an empty
+`gpu.excludedTypes`. Compare requested fields with their actual defaults, while
+rejecting changed worker bounds, GPU selection, and execution timeout. Provider
+health rollups alone cannot establish that a GPU was released or stopped billing.

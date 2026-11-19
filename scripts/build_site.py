@@ -12,6 +12,7 @@ VERSION = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]["versi
 BASE = "https://github.com/lavallee/gipper/blob/main/"
 GUIDES = {
     "quickstart": ROOT / "docs/quickstart.md",
+    "serverless": ROOT / "docs/serverless.md",
     "clients": ROOT / "docs/clients.md",
     "placement": ROOT / "docs/placement.md",
     "custody": ROOT / "docs/custody.md",
